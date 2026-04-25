@@ -4,10 +4,13 @@
 import SwiftUI
 
 struct PairingView: View {
+    let store: TransmitterStore
+
     @State private var deviceId = ""
     @State private var host = ""
     @State private var port = "22000"
     @State private var isPairing = false
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Form {
@@ -22,7 +25,7 @@ struct PairingView: View {
             Section(header: Text("Device ID (optional verification)")) {
                 TextField("Device ID", text: $deviceId)
                     .autocapitalization(.none)
-                    .font(.system(.body, design: .monospaced)
+                    .font(.system(.body, design: .monospaced))
             }
 
             Button(action: pair) {
@@ -40,15 +43,21 @@ struct PairingView: View {
     private func pair() {
         guard let portNum = UInt16(port) else { return }
         isPairing = true
-        // TODO: Connect, send PAIR_REQUEST, receive PAIR_RESPONSE, store key
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+
+        let conn = store.addTransmitter(host: host, port: portNum)
+
+        // Wait briefly for connection, then dismiss
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             isPairing = false
+            if conn.state == .ready {
+                dismiss()
+            }
         }
     }
 }
 
 #Preview {
     NavigationView {
-        PairingView()
+        PairingView(store: TransmitterStore())
     }
 }
