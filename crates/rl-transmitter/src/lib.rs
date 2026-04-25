@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use rl_audio::channel::AudioChannel;
+use rl_audio::engine::AudioEngine;
 use rl_audio::encoder::Bitrate;
 use rl_core::config::Config;
 use rl_core::device_id::DeviceId;
@@ -19,7 +19,7 @@ pub struct Transmitter {
     config: Config,
     device_id: DeviceId,
     keypair: KeyPair,
-    channels: Vec<AudioChannel>,
+    engine: AudioEngine,
     #[allow(dead_code)]
     connection: Option<Connection>,
 }
@@ -37,7 +37,7 @@ impl Transmitter {
             config,
             device_id,
             keypair,
-            channels: Vec::new(),
+            engine: AudioEngine::new(),
             connection: None,
         })
     }
@@ -64,14 +64,28 @@ impl Transmitter {
         frequency: f64,
         bitrate: Bitrate,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let channel = AudioChannel::new_test(channel_id, frequency, bitrate)?;
-        self.channels.push(channel);
+        self.engine.add_test_channel(channel_id, frequency, bitrate)?;
         Ok(())
     }
 
-    /// List channels.
-    pub fn channels(&self) -> &[AudioChannel] {
-        &self.channels
+    /// Remove a channel.
+    pub fn remove_channel(&mut self, channel_id: &str) -> bool {
+        self.engine.remove_channel(channel_id).is_some()
+    }
+
+    /// Number of channels.
+    pub fn channel_count(&self) -> usize {
+        self.engine.channel_count()
+    }
+
+    /// Get the audio engine.
+    pub fn engine(&self) -> &AudioEngine {
+        &self.engine
+    }
+
+    /// Get the audio engine mutably.
+    pub fn engine_mut(&mut self) -> &mut AudioEngine {
+        &mut self.engine
     }
 
     /// Get the listen port.
@@ -136,6 +150,26 @@ mod tests {
             .unwrap();
         tx.add_test_channel("ch-002".into(), 880.0, Bitrate::Kbps32)
             .unwrap();
-        assert_eq!(tx.channels().len(), 2);
+        assert_eq!(tx.channel_count(), 2);
+    }
+
+    #[test]
+    fn transmitter_removes_channel() {
+        let config = Config {
+            device_name: "TestTransmitter".into(),
+            listen_port: 22003,
+            recording_dir: std::env::temp_dir().join("rl-test-tx3"),
+            auto_delete_days: 0,
+            default_bitrate: 16,
+            keypair_path: std::env::temp_dir().join("rl-test-tx3-keypair.bin"),
+        };
+        let mut tx = Transmitter::new(config).unwrap();
+        tx.add_test_channel("ch-001".into(), 440.0, Bitrate::Kbps16)
+            .unwrap();
+        tx.add_test_channel("ch-002".into(), 880.0, Bitrate::Kbps32)
+            .unwrap();
+        assert!(tx.remove_channel("ch-001"));
+        assert_eq!(tx.channel_count(), 1);
+        assert!(!tx.remove_channel("ch-001")); // already removed
     }
 }

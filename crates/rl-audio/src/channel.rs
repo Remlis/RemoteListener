@@ -44,6 +44,29 @@ impl AudioChannel {
         })
     }
 
+    /// Create a channel with a custom audio input.
+    pub fn with_input(
+        channel_id: String,
+        device_name: String,
+        device_uid: String,
+        bitrate: Bitrate,
+        input: Box<dyn AudioInput>,
+    ) -> Result<Self, AudioError> {
+        let encoder = OpusEncoder::new(bitrate)?;
+        Ok(Self {
+            channel_id,
+            device_name,
+            device_uid,
+            recording_enabled: false,
+            bitrate,
+            is_active: true,
+            recorded_bytes: 0,
+            input,
+            encoder,
+            recorder: None,
+        })
+    }
+
     /// Start recording to a file.
     pub fn start_recording(&mut self, path: PathBuf, channel_id: &str) -> Result<(), AudioError> {
         self.recording_enabled = true;
