@@ -3,6 +3,7 @@
 use crate::capture::{AudioError, AudioInput, SineWaveInput};
 use crate::encoder::{Bitrate, OpusEncoder};
 use crate::recorder::RecordingWriter;
+use rl_core::proto::ChannelInfo;
 use std::path::PathBuf;
 
 /// A single audio channel with independent recording state.
@@ -103,6 +104,19 @@ impl AudioChannel {
     /// Encode PCM to Opus frames.
     pub fn encode(&mut self, pcm: &[i16]) -> Result<Vec<Vec<u8>>, AudioError> {
         self.encoder.encode_all(pcm)
+    }
+
+    /// Convert to protobuf ChannelInfo.
+    pub fn to_channel_info(&self) -> ChannelInfo {
+        ChannelInfo {
+            channel_id: self.channel_id.clone(),
+            device_name: self.device_name.clone(),
+            device_uid: self.device_uid.clone(),
+            recording_enabled: self.recording_enabled,
+            is_active: self.is_active,
+            bitrate: self.bitrate.kbps(),
+            recorded_bytes: self.recorded_bytes,
+        }
     }
 
     /// Get mutable reference to the input.

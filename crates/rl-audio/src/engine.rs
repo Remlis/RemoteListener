@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::capture::{AudioError, AudioInput, CpalInput, DeviceInfo};
 use crate::channel::AudioChannel;
 use crate::encoder::Bitrate;
+use rl_core::proto::ChannelInfo;
 
 /// Multi-channel audio engine.
 pub struct AudioEngine {
@@ -91,6 +92,11 @@ impl AudioEngine {
     /// Number of channels.
     pub fn channel_count(&self) -> usize {
         self.channels.len()
+    }
+
+    /// Get ChannelInfo for all channels.
+    pub fn channel_infos(&self) -> Vec<ChannelInfo> {
+        self.channels.values().map(|ch| ch.to_channel_info()).collect()
     }
 }
 

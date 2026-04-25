@@ -39,6 +39,20 @@ pub enum ConnectionEvent {
     PingReceived { timestamp: i64 },
     /// Connection closed by remote.
     Closed { reason: String },
+    /// Channel list requested.
+    ChannelListRequested,
+    /// Live audio start requested.
+    LiveAudioStartRequested { channel_id: String },
+    /// Live audio stop requested.
+    LiveAudioStopRequested { channel_id: String },
+    /// Recording list requested.
+    RecordingListRequested { channel_id: String },
+    /// Recording fetch requested.
+    RecordingFetchRequested { recording_id: String },
+    /// Control command received.
+    ControlCommandReceived { command: ControlCommand },
+    /// Device status requested.
+    DeviceStatusRequested,
     /// Received a message that doesn't belong in current state.
     UnexpectedMessage {
         state: ConnectionState,
@@ -149,6 +163,41 @@ impl Connection {
                     reason: close.reason,
                 });
             }
+            MessageType::ChannelListRequest => {
+                let _: ChannelListRequest = frame::decode_message(decoded)?;
+                events.push(ConnectionEvent::ChannelListRequested);
+            }
+            MessageType::LiveAudioStart => {
+                let req: LiveAudioStart = frame::decode_message(decoded)?;
+                events.push(ConnectionEvent::LiveAudioStartRequested {
+                    channel_id: req.channel_id,
+                });
+            }
+            MessageType::LiveAudioStop => {
+                let req: LiveAudioStop = frame::decode_message(decoded)?;
+                events.push(ConnectionEvent::LiveAudioStopRequested {
+                    channel_id: req.channel_id,
+                });
+            }
+            MessageType::RecordingListRequest => {
+                let req: RecordingListRequest = frame::decode_message(decoded)?;
+                events.push(ConnectionEvent::RecordingListRequested {
+                    channel_id: req.channel_id,
+                });
+            }
+            MessageType::RecordingFetchRequest => {
+                let req: RecordingFetchRequest = frame::decode_message(decoded)?;
+                events.push(ConnectionEvent::RecordingFetchRequested {
+                    recording_id: req.recording_id,
+                });
+            }
+            MessageType::ControlCommand => {
+                let cmd: ControlCommand = frame::decode_message(decoded)?;
+                events.push(ConnectionEvent::ControlCommandReceived { command: cmd });
+            }
+            MessageType::DeviceStatus => {
+                events.push(ConnectionEvent::DeviceStatusRequested);
+            }
             _ => {
                 // Other messages are valid in Ready state
             }
@@ -202,6 +251,107 @@ impl Connection {
             public_key_fingerprint: fingerprint,
         };
         frame::encode_message(MessageType::Unpair, &unpair)
+    }
+
+    /// Create a CHANNEL_LIST message.
+    pub fn create_channel_list(channels: Vec<ChannelInfo>) -> Vec<u8> {
+        let list = ChannelList { channels };
+        frame::encode_message(MessageType::ChannelList, &list)
+    }
+
+    /// Create a LIVE_AUDIO_START_RESPONSE message.
+    pub fn create_live_audio_start_response(
+        channel_id: &str,
+        success: bool,
+        error: &str,
+    ) -> Vec<u8> {
+        let resp = LiveAudioStartResponse {
+            channel_id: channel_id.to_string(),
+            success,
+            error: error.to_string(),
+        };
+        frame::encode_message(MessageType::LiveAudioStartResponse, &resp)
+    }
+
+    /// Create a LIVE_AUDIO_CHUNK message.
+    pub fn create_live_audio_chunk(
+        channel_id: &str,
+        data: &[u8],
+        sequence: u32,
+        timestamp: i64,
+    ) -> Vec<u8> {
+        let chunk = LiveAudioChunk {
+            channel_id: channel_id.to_string(),
+            data: data.to_vec(),
+            sequence,
+            timestamp,
+        };
+        frame::encode_message(MessageType::LiveAudioChunk, &chunk)
+    }
+
+    /// Create a RECORDING_LIST_RESPONSE message.
+    pub fn create_recording_list_response(recordings: Vec<RecordingInfo>) -> Vec<u8> {
+        let resp = RecordingListResponse { recordings };
+        frame::encode_message(MessageType::RecordingListResponse, &resp)
+    }
+
+    /// Create a RECORDING_CHUNK message.
+    pub fn create_recording_chunk(
+        recording_id: &str,
+        data: &[u8],
+        chunk_index: u32,
+        is_last: bool,
+    ) -> Vec<u8> {
+        let chunk = RecordingChunk {
+            recording_id: recording_id.to_string(),
+            data: data.to_vec(),
+            chunk_index,
+            is_last,
+        };
+        frame::encode_message(MessageType::RecordingChunk, &chunk)
+    }
+
+    /// Create a RECORDING_FETCH_COMPLETE message.
+    pub fn create_recording_fetch_complete(recording_id: &str) -> Vec<u8> {
+        let msg = RecordingFetchComplete {
+            recording_id: recording_id.to_string(),
+        };
+        frame::encode_message(MessageType::RecordingFetchComplete, &msg)
+    }
+
+    /// Create a RECORDING_FETCH_ERROR message.
+    pub fn create_recording_fetch_error(recording_id: &str, error: &str) -> Vec<u8> {
+        let msg = RecordingFetchError {
+            recording_id: recording_id.to_string(),
+            error: error.to_string(),
+        };
+        frame::encode_message(MessageType::RecordingFetchError, &msg)
+    }
+
+    /// Create a CONTROL_RESPONSE message.
+    pub fn create_control_response(success: bool, error: &str) -> Vec<u8> {
+        let resp = ControlResponse {
+            success,
+            error: error.to_string(),
+            payload: None,
+        };
+        frame::encode_message(MessageType::ControlResponse, &resp)
+    }
+
+    /// Create a DEVICE_STATUS message.
+    pub fn create_device_status(
+        device_name: &str,
+        channels: Vec<ChannelInfo>,
+        storage: Option<StorageInfo>,
+        uptime_seconds: u64,
+    ) -> Vec<u8> {
+        let status = DeviceStatus {
+            device_name: device_name.to_string(),
+            channels,
+            storage,
+            uptime_seconds,
+        };
+        frame::encode_message(MessageType::DeviceStatus, &status)
     }
 }
 
