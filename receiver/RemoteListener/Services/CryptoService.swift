@@ -10,8 +10,8 @@ class CryptoService {
     /// Perform X25519 ECDH and derive a shared KEK using HKDF-SHA256.
     static func deriveKEK(myPrivateKey: Curve25519.KeyAgreement.PrivateKey,
                           theirPublicKey: Curve25519.KeyAgreement.PublicKey,
-                          info: Data) -> SymmetricKey {
-        let sharedSecret = try! myPrivateKey.sharedSecretFromKeyAgreement(with: theirPublicKey)
+                          info: Data) throws -> SymmetricKey {
+        let sharedSecret = try myPrivateKey.sharedSecretFromKeyAgreement(with: theirPublicKey)
         return sharedSecret.hkdfDerivedSymmetricKey(using: SHA256.self,
                                                      salt: Data(),
                                                      sharedInfo: info,

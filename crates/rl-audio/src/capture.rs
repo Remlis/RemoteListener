@@ -51,24 +51,38 @@ impl SineWaveInput {
 impl AudioInput for SineWaveInput {
     fn start(&mut self) -> Result<mpsc::Receiver<AudioChunk>, AudioError> {
         let (tx, rx) = mpsc::channel();
-        let total_samples = (self.sample_rate as f64 * self.duration_secs) as usize;
         let freq = self.frequency;
         let sr = self.sample_rate;
+        let total_samples = (sr as f64 * self.duration_secs) as usize;
 
-        let samples: Vec<i16> = (0..total_samples)
-            .map(|i| {
-                let t = i as f64 / sr as f64;
-                let val = (2.0 * std::f64::consts::PI * freq * t).sin();
-                (val * i16::MAX as f64 * 0.5) as i16
-            })
-            .collect();
+        // Generate samples in chunks of 960 (20ms at 48kHz) to avoid
+        // allocating all samples in memory at once.
+        std::thread::spawn(move || {
+            let chunk_size = 960usize;
+            let mut sample_idx = 0usize;
 
-        let chunk = AudioChunk {
-            samples,
-            timestamp_us: 0,
-        };
+            while sample_idx < total_samples {
+                let end = (sample_idx + chunk_size).min(total_samples);
+                let samples: Vec<i16> = (sample_idx..end)
+                    .map(|i| {
+                        let t = i as f64 / sr as f64;
+                        let val = (2.0 * std::f64::consts::PI * freq * t).sin();
+                        (val * i16::MAX as f64 * 0.5) as i16
+                    })
+                    .collect();
 
-        tx.send(chunk).map_err(|_| AudioError::CaptureFailed)?;
+                let chunk = AudioChunk {
+                    samples,
+                    timestamp_us: (sample_idx as u64 * 1_000_000) / sr as u64,
+                };
+
+                if tx.send(chunk).is_err() {
+                    break; // Receiver dropped
+                }
+                sample_idx = end;
+            }
+        });
+
         Ok(rx)
     }
 

@@ -2387,6 +2387,7 @@ dependencies = [
  "aes-gcm",
  "dirs",
  "rand 0.8.6",
+ "rcgen",
  "rl-audio",
  "rl-core",
  "rl-crypto",

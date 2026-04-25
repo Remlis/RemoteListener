@@ -18,6 +18,7 @@ dirs = { workspace = true }
 aes-gcm = { workspace = true }
 x25519-dalek = { workspace = true }
 rand = { workspace = true }
+rcgen = { workspace = true }
 
 [lib]
 name = "rl_transmitter"

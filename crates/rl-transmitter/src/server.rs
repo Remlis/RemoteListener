@@ -8,7 +8,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, Mutex};
 
-use aes_gcm::aead::Aead;
 use rl_audio::capture::AudioChunk;
 use rl_audio::encoder::Bitrate;
 use rl_audio::engine::AudioEngine;
@@ -137,6 +136,8 @@ pub struct TransmitterState {
     audio_senders: Mutex<HashMap<String, broadcast::Sender<Vec<u8>>>>,
     /// Connection manager for tracking receivers.
     connections: Mutex<ConnectionManager>,
+    /// Maximum number of concurrent connections.
+    max_connections: usize,
 }
 
 impl TransmitterState {
@@ -147,22 +148,31 @@ impl TransmitterState {
             keypair,
             audio_senders: Mutex::new(HashMap::new()),
             connections: Mutex::new(ConnectionManager::new()),
+            max_connections: 32,
         }
     }
 
+    /// Check if we can accept a new connection.
+    async fn can_accept_connection(&self) -> bool {
+        let mgr = self.connections.lock().await;
+        mgr.connection_count() < self.max_connections
+    }
+
     /// Get or create a broadcast sender for a channel.
-    /// Returns the sender and the number of existing receivers.
-    async fn get_or_create_sender(&self, channel_id: &str) -> (broadcast::Sender<Vec<u8>>, usize) {
+    /// Returns the sender and whether a new capture task should be spawned.
+    async fn get_or_create_sender(&self, channel_id: &str) -> (broadcast::Sender<Vec<u8>>, bool) {
         let mut senders = self.audio_senders.lock().await;
         if let Some(tx) = senders.get(channel_id) {
-            let count = tx.receiver_count();
-            return (tx.clone(), count);
+            // Existing sender — a capture task should already be running.
+            // receiver_count() counts broadcast receivers (stream tasks),
+            // so if > 0, capture is running.
+            let needs_capture = tx.receiver_count() == 0;
+            return (tx.clone(), needs_capture);
         }
         // Create a broadcast channel with capacity for ~50 Opus frames (~1 second)
         let (tx, _) = broadcast::channel(50);
-        let count = tx.receiver_count();
         senders.insert(channel_id.to_string(), tx.clone());
-        (tx, count)
+        (tx, true) // New channel, needs capture task
     }
 
     /// Remove a broadcast sender when no longer needed.
@@ -174,7 +184,22 @@ impl TransmitterState {
             }
         }
     }
+
+    /// Clean up a sender for a channel after a stream task ends.
+    /// This handles the dead channel issue by removing the sender
+    /// when all stream tasks have ended.
+    async fn cleanup_sender(&self, channel_id: &str) {
+        let mut senders = self.audio_senders.lock().await;
+        if let Some(tx) = senders.get(channel_id) {
+            if tx.receiver_count() == 0 {
+                senders.remove(channel_id);
+            }
+        }
+    }
 }
+
+/// Maximum read buffer size (10 MB).
+const MAX_READ_BUF: usize = 10 * 1024 * 1024;
 
 /// Run the transmitter's TCP server.
 pub async fn run_server(
@@ -187,6 +212,16 @@ pub async fn run_server(
 
     loop {
         let (stream, remote_addr) = listener.accept().await?;
+
+        if !state.can_accept_connection().await {
+            tracing::warn!(
+                "Rejecting connection from {}: max connections reached",
+                remote_addr
+            );
+            drop(stream);
+            continue;
+        }
+
         tracing::info!("Connection from {}", remote_addr);
 
         let state = state.clone();
@@ -230,6 +265,13 @@ async fn handle_connection(
             break; // Connection closed
         }
         read_buf.extend_from_slice(&tmp[..n]);
+
+        // Bound read buffer growth to prevent OOM
+        if read_buf.len() > MAX_READ_BUF {
+            tracing::warn!("Read buffer exceeded {} bytes, clearing", MAX_READ_BUF);
+            read_buf.clear();
+            break;
+        }
 
         // Try to decode frames from the buffer
         while !read_buf.is_empty() {
@@ -295,7 +337,7 @@ async fn handle_event(
             responses.push(Connection::create_channel_list(infos));
         }
         ConnectionEvent::LiveAudioStartRequested { channel_id } => {
-            let (tx, receiver_count) = state.get_or_create_sender(channel_id).await;
+            let (tx, needs_capture) = state.get_or_create_sender(channel_id).await;
 
             // Verify channel exists
             let channel_exists = {
@@ -314,14 +356,17 @@ async fn handle_event(
                     mgr.subscribe(conn_id, channel_id);
                 }
 
-                // If this is the first subscriber, start the capture task
-                if receiver_count == 0 {
+                // Spawn a streaming task for this connection+channel FIRST,
+                // so the broadcast receiver is registered before the capture
+                // task starts sending. This prevents the TOCTOU race where
+                // receiver_count was checked before the stream task subscribed.
+                let rx = tx.subscribe();
+                spawn_stream_task(channel_id.clone(), rx, writer.clone(), state.clone());
+
+                // If no capture task is running for this channel, start one
+                if needs_capture {
                     spawn_capture_task(state.clone(), channel_id.clone(), tx.clone());
                 }
-
-                // Spawn a streaming task for this connection+channel
-                let rx = tx.subscribe();
-                spawn_stream_task(channel_id.clone(), rx, writer.clone());
             } else {
                 responses.push(Connection::create_live_audio_start_response(
                     channel_id,
@@ -361,27 +406,16 @@ async fn handle_event(
             device_name: _,
             public_key,
         } => {
-            // Derive KEK from ECDH with the receiver's public key
+            // Compute the fingerprint of the receiver's public key for tracking
             let their_public = x25519_dalek::PublicKey::from(
                 <[u8; 32]>::try_from(public_key.as_slice()).unwrap_or([0u8; 32]),
             );
-            let shared = state.keypair.diffie_hellman(&their_public);
-            let kek = shared.derive_kek(b"rl-pairing/v1");
+            let receiver_fingerprint = rl_crypto::key::fingerprint(&their_public.to_bytes());
 
-            // Encrypt the transmitter's private key with the KEK
-            let private_key_bytes = state.keypair.secret_bytes();
-            let mut nonce_bytes = [0u8; 12];
-            rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
-            let nonce = aes_gcm::Nonce::from_slice(&nonce_bytes);
-            let encrypted_key = kek
-                .encrypt(nonce, private_key_bytes.as_slice())
-                .unwrap_or_default();
-
-            // Build the encrypted private key blob: nonce(12) + ciphertext+tag
-            let mut private_key_blob = Vec::with_capacity(12 + encrypted_key.len());
-            private_key_blob.extend_from_slice(&nonce_bytes);
-            private_key_blob.extend_from_slice(&encrypted_key);
-
+            // Respond with our public key and existing fingerprints.
+            // We no longer send the private key over the network.
+            // Instead, each side derives a shared KEK via ECDH for
+            // future encrypted communication.
             let existing_fps = {
                 let mgr = state.connections.lock().await;
                 mgr.paired_fingerprints()
@@ -389,17 +423,17 @@ async fn handle_event(
 
             responses.push(Connection::create_pair_response(
                 state.keypair.public_key().as_bytes().to_vec(),
-                private_key_blob,
+                Vec::new(), // No private key blob
                 existing_fps,
             ));
+
+            // Store the receiver's fingerprint for this connection
+            let mut mgr = state.connections.lock().await;
+            mgr.set_paired(conn_id, receiver_fingerprint);
         }
         ConnectionEvent::PairConfirmed { accepted } => {
             if *accepted {
                 tracing::info!("Pairing confirmed for conn {}", conn_id);
-                // The fingerprint will be set when we receive the receiver's
-                // public key in the PairRequest. For now, mark as paired.
-                let mut mgr = state.connections.lock().await;
-                mgr.set_paired(conn_id, vec![]); // TODO: use actual fingerprint
             } else {
                 tracing::info!("Pairing rejected for conn {}", conn_id);
             }
@@ -522,6 +556,7 @@ fn spawn_stream_task(
     channel_id: String,
     mut rx: broadcast::Receiver<Vec<u8>>,
     writer: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    state: Arc<TransmitterState>,
 ) {
     tokio::spawn(async move {
         let mut sequence: u32 = 0;
@@ -553,6 +588,9 @@ fn spawn_stream_task(
         }
 
         tracing::info!("Stream task ended for channel {}", channel_id);
+
+        // Clean up the sender if no more receivers exist (dead channel fix)
+        state.cleanup_sender(&channel_id).await;
     });
 }
 

@@ -10,6 +10,7 @@ struct RemoteListenerApp: App {
     var body: some Scene {
         WindowGroup {
             TransmittersView()
+                .environmentObject(store)
         }
     }
 }

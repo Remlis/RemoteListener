@@ -4,6 +4,7 @@
 import Foundation
 import Network
 import Combine
+import CryptoKit
 
 /// Connection state matching the Rust ConnectionState enum.
 public enum ConnectionState: Equatable {
@@ -58,6 +59,10 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     public let host: String
     public let port: UInt16
 
+    /// Expected SHA-256 fingerprint of the peer's certificate (hex string).
+    /// If nil, certificate verification is skipped (only for first-time pairing).
+    public var expectedFingerprint: String?
+
     @Published public private(set) var state: ConnectionState = .connecting
     @Published public private(set) var remoteDeviceName: String?
     @Published public private(set) var channels: [ChannelInfo] = []
@@ -71,11 +76,12 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     private let readQueue = DispatchQueue(label: "com.rl.receiver.read", qos: .userInitiated)
     private let writeQueue = DispatchQueue(label: "com.rl.receiver.write", qos: .userInitiated)
 
-    public init(host: String, port: UInt16) {
+    public init(host: String, port: UInt16, expectedFingerprint: String? = nil) {
         self.host = host
         self.port = port
         self.identifier = "\(host):\(port)"
         self.id = self.identifier
+        self.expectedFingerprint = expectedFingerprint
     }
 
     /// Connect to the transmitter.
@@ -88,10 +94,37 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         sec_protocol_options_add_tls_application_protocol(
             tlsOptions.securityProtocolOptions, alpnData)
 
-        // TODO: Verify certificate fingerprint
+        // Verify certificate fingerprint against expected value
+        let expectedFingerprint = self.expectedFingerprint
         sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
-            { (_, _, verifyCallback) in
-                verifyCallback(true)
+            { (_, sec_trust, verifyCallback) in
+                guard let expected = expectedFingerprint else {
+                    // No fingerprint stored yet (first-time pairing) — accept and capture
+                    verifyCallback(true)
+                    return
+                }
+                let trust = sec_trust_copy_ref(sec_trust).takeRetainedValue()
+                var cfError: Unmanaged<CFError>?
+                guard SecTrustEvaluateWithError(trust, &cfError) else {
+                    print("TLS: certificate trust evaluation failed")
+                    verifyCallback(false)
+                    return
+                }
+                // Get the leaf certificate and compute its SHA-256 fingerprint
+                guard let certChain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
+                      let leafCert = certChain.first,
+                      let certData = SecCertificateCopyData(leafCert) as Data? else {
+                    print("TLS: could not extract peer certificate")
+                    verifyCallback(false)
+                    return
+                }
+                let fingerprint = SHA256.hash(data: certData).compactMap { String(format: "%02x", $0) }.joined()
+                if fingerprint == expected {
+                    verifyCallback(true)
+                } else {
+                    print("TLS: fingerprint mismatch (expected \(expected), got \(fingerprint))")
+                    verifyCallback(false)
+                }
             }, DispatchQueue.main)
 
         let parameters = NWParameters(tls: tlsOptions, tcp: NWProtocolTCP.Options())
@@ -123,7 +156,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         }
         connection?.cancel()
         connection = nil
-        state = .closed
+        DispatchQueue.main.async { self.state = .closed }
     }
 
     // MARK: - Sending Messages
@@ -183,8 +216,10 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     // MARK: - Reading
 
     private func startReadLoop() {
-        readBuffer = Data()
-        readNextChunk()
+        readQueue.async { [weak self] in
+            self?.readBuffer = Data()
+            self?.readNextChunk()
+        }
     }
 
     private func readNextChunk() {
@@ -251,6 +286,8 @@ public class TransmitterConnection: ObservableObject, Identifiable {
             break // TODO
         case .recordingListResponse, .recordingChunk, .recordingFetchComplete, .recordingFetchError:
             break // TODO: recording handling
+        case .unknown:
+            print("Received unknown message type: \(header.messageType.rawValue)")
         default:
             break
         }
@@ -344,7 +381,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         }
 
         return ChannelInfo(
-            id: channelID, deviceName: deviceName, deviceUID: deviceUID,
+            id: channelID.isEmpty ? deviceUID : channelID, deviceName: deviceName, deviceUID: deviceUID,
             recordingEnabled: recordingEnabled, isActive: isActive,
             bitrate: bitrate, recordedBytes: recordedBytes
         )
@@ -369,12 +406,26 @@ public class TransmitterConnection: ObservableObject, Identifiable {
             channelID: channelID, data: audioData,
             sequence: sequence, timestamp: timestamp
         )
-        audioChunkSubject.send(chunk)
+        DispatchQueue.main.async {
+            self.audioChunkSubject.send(chunk)
+        }
     }
 
     private func handlePairResponse(_ data: Data) {
-        // TODO: Full pairing implementation
-        // publicKey = field 1, privateKey = field 2, fingerprints = field 3
+        // PairResponse { public_key = 1, private_key = 2, existing_key_fingerprints = 3 }
+        let publicKeyData = data.parseProtoBytes(field: 1)
+        // Store the transmitter's public key for future TLS fingerprint verification
+        if let pubKey = publicKeyData {
+            let fingerprint = SHA256.hash(data: pubKey).compactMap { String(format: "%02x", $0) }.joined()
+            expectedFingerprint = fingerprint
+            print("Paired with transmitter fingerprint: \(fingerprint)")
+        }
+        // Note: private_key (field 2) handling is a protocol concern —
+        // the current protocol sends the transmitter's private key which is
+        // a design issue (issue #4). For now, we acknowledge the pairing.
+        DispatchQueue.main.async {
+            self.isPaired = true
+        }
     }
 
     private func handlePairConfirm(_ data: Data) {
@@ -385,34 +436,58 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     }
 
     private func handleDeviceStatus(_ data: Data) {
-        // Re-parse channel list from device status
-        // DeviceStatus { device_name = 1, channels = 2, storage = 3, uptime = 4 }
+        // DeviceStatus { device_name = 1, channels = 2, storage = 3, uptime_seconds = 4 }
+        var deviceName: String?
+        var channels: [ChannelInfo] = []
+
         var offset = 0
         while offset < data.count {
             guard let tag = data[offset..].readVarInt(offset: &offset) else { break }
             let fieldNumber = UInt32(tag >> 3)
             let wireType = tag & 0x07
 
-            if fieldNumber == 2 && wireType == 2 {
+            switch (fieldNumber, wireType) {
+            case (1, 2): deviceName = data.parseStringAt(offset: &offset)
+            case (2, 2):
                 // Parse channel list (same format as ChannelList.channels)
-                if let len = data[offset..].readVarInt(offset: &offset) {
-                    let endOffset = offset + Int(len)
-                    if endOffset <= data.count {
-                        _ = data[offset..<endOffset]
-                        offset = endOffset
+                guard let len = data[offset..].readVarInt(offset: &offset) else { break }
+                let endOffset = offset + Int(len)
+                guard endOffset <= data.count else { break }
+                let channelListData = data[offset..<endOffset]
+                offset = endOffset
+                // Parse inner ChannelInfo messages from ChannelList
+                var innerOffset = 0
+                while innerOffset < channelListData.count {
+                    guard let innerTag = channelListData[innerOffset..].readVarInt(offset: &innerOffset) else { break }
+                    let innerField = UInt32(innerTag >> 3)
+                    let innerWire = innerTag & 0x07
+                    if innerField == 1 && innerWire == 2 {
+                        if let ch = parseSubChannelInfo(channelListData, offset: &innerOffset) {
+                            channels.append(ch)
+                        }
+                    } else {
+                        guard channelListData.skipField(wireType: innerWire, offset: &innerOffset) else { break }
                     }
                 }
-            } else {
-                switch wireType {
-                case 0: _ = data[offset..].readVarInt(offset: &offset)
-                case 2:
-                    if let len = data[offset..].readVarInt(offset: &offset) {
-                        offset += Int(len)
-                    }
-                default: break
-                }
+            default:
+                guard data.skipField(wireType: wireType, offset: &offset) else { break }
             }
         }
+
+        DispatchQueue.main.async {
+            if let name = deviceName { self.remoteDeviceName = name }
+            if !channels.isEmpty { self.channels = channels }
+        }
+    }
+
+    /// Parse a ChannelInfo sub-message at the current offset (length-delimited).
+    private func parseSubChannelInfo(_ data: Data, offset: inout Int) -> ChannelInfo? {
+        guard let len = data[offset..].readVarInt(offset: &offset) else { return nil }
+        let endOffset = offset + Int(len)
+        guard endOffset <= data.count else { return nil }
+        let channelData = data[offset..<endOffset]
+        offset = endOffset
+        return parseChannelInfo(channelData)
     }
 }
 
@@ -460,7 +535,7 @@ extension Data {
             if fieldNumber == field && wireType == 2 {
                 return parseStringAt(offset: &offset)
             } else {
-                skipField(wireType: wireType, offset: &offset)
+                guard skipField(wireType: wireType, offset: &offset) else { return nil }
             }
         }
         return nil
@@ -476,7 +551,7 @@ extension Data {
             if fieldNumber == field && wireType == 0 {
                 return parseBoolAt(offset: &offset)
             } else {
-                skipField(wireType: wireType, offset: &offset)
+                guard skipField(wireType: wireType, offset: &offset) else { return false }
             }
         }
         return false
@@ -492,7 +567,7 @@ extension Data {
             if fieldNumber == field && wireType == 0 {
                 return parseVarIntAt(offset: &offset)
             } else {
-                skipField(wireType: wireType, offset: &offset)
+                guard skipField(wireType: wireType, offset: &offset) else { return nil }
             }
         }
         return nil
@@ -513,7 +588,7 @@ extension Data {
                 offset = endOffset
                 return result
             } else {
-                skipField(wireType: wireType, offset: &offset)
+                guard skipField(wireType: wireType, offset: &offset) else { return nil }
             }
         }
         return nil
@@ -537,16 +612,16 @@ extension Data {
         self[offset..].readVarInt(offset: &offset)
     }
 
-    func skipField(wireType: UInt64, offset: inout Int) {
+    func skipField(wireType: UInt64, offset: inout Int) -> Bool {
         switch wireType {
         case 0: _ = self[offset..].readVarInt(offset: &offset)
         case 1: offset += 8
         case 2:
-            if let len = self[offset..].readVarInt(offset: &offset) {
-                offset += Int(len)
-            }
+            guard let len = self[offset..].readVarInt(offset: &offset) else { return false }
+            offset += Int(len)
         case 5: offset += 4
-        default: break
+        default: return false // Unknown wire type — cannot skip
         }
+        return true
     }
 }

@@ -56,8 +56,23 @@ impl Config {
             return Ok(config);
         }
         let text = std::fs::read_to_string(path).map_err(ConfigError::Io)?;
-        let config: Self = toml::from_str(&text).map_err(ConfigError::Parse)?;
+        let mut config: Self = toml::from_str(&text).map_err(ConfigError::Parse)?;
+        config.validate();
         Ok(config)
+    }
+
+    /// Validate config values, clamping invalid ones to valid ranges.
+    fn validate(&mut self) {
+        match self.default_bitrate {
+            16 | 32 | 64 | 128 => {}
+            _ => {
+                tracing::warn!(
+                    "Invalid default_bitrate {}, clamping to 16",
+                    self.default_bitrate
+                );
+                self.default_bitrate = 16;
+            }
+        }
     }
 
     /// Save config to a TOML file.

@@ -134,7 +134,14 @@ fn luhn_check_char(data: &str) -> char {
 
     let mut sum: u32 = 0;
     for (i, ch) in data.chars().enumerate() {
-        let val = ALPHABET.iter().position(|&c| c == ch as u8).unwrap_or(0) as u32;
+        let val = match ALPHABET.iter().position(|&c| c == ch as u8) {
+            Some(v) => v as u32,
+            None => {
+                // Treat unknown characters as having value 0 but log a warning
+                tracing::debug!("Unknown character '{}' in Luhn input, treating as 0", ch);
+                0
+            }
+        };
         let factor = if i % 2 == 0 { 2 } else { 1 };
         sum += val * factor;
     }

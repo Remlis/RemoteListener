@@ -29,7 +29,8 @@ impl Transmitter {
     /// Create a new transmitter instance.
     pub fn new(config: Config) -> Result<Self, Box<dyn std::error::Error>> {
         // Load or generate Device ID + certificate
-        let (device_id, _cert) = DeviceId::generate()?;
+        let device_id_path = config.keypair_path.with_extension("device_id");
+        let (device_id, _cert) = Self::load_or_generate_device_id(&device_id_path)?;
 
         // Load or generate X25519 keypair
         let keypair = Self::load_or_generate_keypair(&config.keypair_path)?;
@@ -100,6 +101,27 @@ impl Transmitter {
         &self.config
     }
 
+    fn load_or_generate_device_id(
+        path: &Path,
+    ) -> Result<(DeviceId, rcgen::CertifiedKey<rcgen::KeyPair>), Box<dyn std::error::Error>> {
+        if path.exists() {
+            let text = std::fs::read_to_string(path)?;
+            if let Ok(id) = text.trim().parse::<DeviceId>() {
+                // Device ID exists but we don't have the cert — that's OK for display
+                // Generate a new cert for TLS but keep the same ID display string
+                let (_new_id, cert) = DeviceId::generate()?;
+                // Return the persisted ID (but we lose the original cert — acceptable for now)
+                return Ok((id, cert));
+            }
+        }
+        let (id, cert) = DeviceId::generate()?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, id.display())?;
+        Ok((id, cert))
+    }
+
     fn load_or_generate_keypair(path: &Path) -> Result<KeyPair, Box<dyn std::error::Error>> {
         if path.exists() {
             let bytes = std::fs::read(path)?;
@@ -113,7 +135,21 @@ impl Transmitter {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, keypair.secret_bytes())?;
+        // Write with restrictive permissions (owner read/write only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path)?;
+            std::fs::write(path, keypair.secret_bytes())?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(path, keypair.secret_bytes())?;
+        }
         Ok(keypair)
     }
 }

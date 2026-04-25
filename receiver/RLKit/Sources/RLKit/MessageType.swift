@@ -5,32 +5,45 @@ import Foundation
 
 /// Message types matching the proto MessageType enum.
 public enum MessageType: UInt32, CaseIterable {
+    // Handshake
     case hello = 1
     case pairRequest = 2
     case pairResponse = 3
     case pairConfirm = 4
-    case unpair = 5
-    case ping = 6
-    case close = 7
-    case channelListRequest = 20
-    case channelList = 21
-    case liveAudioStart = 30
-    case liveAudioStartResponse = 31
-    case liveAudioStop = 32
-    case liveAudioChunk = 33
-    case recordingListRequest = 40
-    case recordingListResponse = 41
-    case recordingFetchRequest = 42
-    case recordingChunk = 43
-    case recordingFetchComplete = 44
-    case recordingFetchError = 45
-    case controlCommand = 50
-    case controlResponse = 51
-    case deviceStatus = 60
-    case storageInfo = 61
+    case ping = 5
+    case close = 6
+    case unpair = 7
 
-    public init?(rawValue: UInt32) {
-        Self.allCases.first { $0.rawValue == rawValue }
+    // Channel management
+    case channelListRequest = 8
+    case channelList = 9
+
+    // Recording
+    case recordingListRequest = 10
+    case recordingListResponse = 11
+    case recordingFetchRequest = 12
+    case recordingChunk = 13
+    case recordingFetchComplete = 14
+    case recordingFetchError = 15
+
+    // Live audio
+    case liveAudioStart = 20
+    case liveAudioStop = 21
+    case liveAudioChunk = 22
+    case liveAudioStartResponse = 23
+
+    // Remote control
+    case controlCommand = 30
+    case controlResponse = 31
+
+    // Device status
+    case deviceStatus = 40
+
+    /// Unknown message type not in this enum. Stored so the raw value is preserved.
+    case unknown = 0
+
+    public init(rawValue: UInt32) {
+        self = Self.allCases.first { $0.rawValue == rawValue } ?? .unknown
     }
 }
 
@@ -83,16 +96,15 @@ public struct RLPHeader {
                 case 0: _ = data[offset..].readVarInt(offset: &offset)
                 case 1: offset += 8
                 case 2:
-                    if let len = data[offset..].readVarInt(offset: &offset) {
-                        offset += Int(len)
-                    }
+                    guard let len = data[offset..].readVarInt(offset: &offset) else { return nil }
+                    offset += Int(len)
                 case 5: offset += 4
                 default: return nil
                 }
             }
         }
 
-        guard let mt = MessageType(rawValue: msgType) else { return nil }
+        let mt = MessageType(rawValue: msgType)
         return RLPHeader(messageType: mt, compressed: compressed)
     }
 }

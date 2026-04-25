@@ -47,13 +47,17 @@ public struct RLPFrame {
 
 extension Data {
     func readUInt16(at offset: Int) -> UInt16 {
-        let value = self[offset..<(offset + 2)].withUnsafeBytes { $0.load(as: UInt16.self) }
-        return UInt16(bigEndian: value)
+        let lo = UInt16(self[offset])
+        let hi = UInt16(self[offset + 1])
+        return (hi << 8) | lo
     }
 
     func readUInt32(at offset: Int) -> UInt32 {
-        let value = self[offset..<(offset + 4)].withUnsafeBytes { $0.load(as: UInt32.self) }
-        return UInt32(bigEndian: value)
+        let b0 = UInt32(self[offset])
+        let b1 = UInt32(self[offset + 1])
+        let b2 = UInt32(self[offset + 2])
+        let b3 = UInt32(self[offset + 3])
+        return (b3 << 24) | (b2 << 16) | (b1 << 8) | b0
     }
 }
 

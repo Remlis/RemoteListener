@@ -82,6 +82,13 @@ pub fn ephemeral_dh(their_public: &PublicKey) -> (SharedSecret, PublicKey) {
     (SharedSecret(shared.to_bytes()), ephemeral_public)
 }
 
+/// Compute SHA-256 fingerprint of raw public key bytes.
+pub fn fingerprint(public_key_bytes: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(public_key_bytes);
+    hasher.finalize().to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

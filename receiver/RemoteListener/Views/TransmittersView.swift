@@ -4,7 +4,7 @@
 import SwiftUI
 
 struct TransmittersView: View {
-    @StateObject private var store = TransmitterStore()
+    @EnvironmentObject var store: TransmitterStore
     @State private var showPairing = false
 
     var body: some View {
