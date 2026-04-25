@@ -15,12 +15,14 @@ use rl_net::connection::{Connection, ConnectionEvent};
 use rl_net::frame;
 
 /// Shared transmitter state accessible by all connections.
+#[allow(dead_code)]
 pub struct TransmitterState {
     pub engine: Arc<Mutex<AudioEngine>>,
     pub device_name: String,
 }
 
 /// Run the transmitter's TCP server.
+#[allow(dead_code)]
 pub async fn run_server(
     addr: SocketAddr,
     state: Arc<TransmitterState>,
@@ -43,6 +45,7 @@ pub async fn run_server(
     }
 }
 
+#[allow(dead_code)]
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     device_id: String,
@@ -103,6 +106,7 @@ async fn handle_connection(
 }
 
 /// Handle a connection event, returning response frames to send back.
+#[allow(dead_code)]
 async fn handle_event(
     event: &ConnectionEvent,
     state: &Arc<TransmitterState>,
@@ -175,6 +179,7 @@ async fn handle_event(
 }
 
 /// Handle a control command and return a response frame.
+#[allow(dead_code)]
 fn handle_control_command(
     engine: &mut AudioEngine,
     cmd: &ControlCommand,
