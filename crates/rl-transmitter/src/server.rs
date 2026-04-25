@@ -9,8 +9,8 @@ use tokio::net::TcpListener;
 use tokio::sync::{broadcast, Mutex};
 
 use rl_audio::capture::AudioChunk;
-use rl_audio::engine::AudioEngine;
 use rl_audio::encoder::Bitrate;
+use rl_audio::engine::AudioEngine;
 use rl_core::proto::*;
 use rl_net::connection::{Connection, ConnectionEvent};
 use rl_net::frame;
@@ -35,10 +35,7 @@ impl TransmitterState {
 
     /// Get or create a broadcast sender for a channel.
     /// Returns the sender and the number of existing receivers.
-    async fn get_or_create_sender(
-        &self,
-        channel_id: &str,
-    ) -> (broadcast::Sender<Vec<u8>>, usize) {
+    async fn get_or_create_sender(&self, channel_id: &str) -> (broadcast::Sender<Vec<u8>>, usize) {
         let mut senders = self.audio_senders.lock().await;
         if let Some(tx) = senders.get(channel_id) {
             let count = tx.receiver_count();
@@ -122,13 +119,8 @@ async fn handle_connection(
                     let events = conn.handle_frame(&decoded)?;
 
                     for event in events {
-                        let responses = handle_event(
-                            &event,
-                            &state,
-                            &mut live_channels,
-                            &writer,
-                        )
-                        .await;
+                        let responses =
+                            handle_event(&event, &state, &mut live_channels, &writer).await;
                         let mut w = writer.lock().await;
                         for frame_bytes in responses {
                             w.write_all(&frame_bytes).await?;
@@ -185,14 +177,12 @@ async fn handle_event(
 
                 // Spawn a streaming task for this connection+channel
                 let rx = tx.subscribe();
-                spawn_stream_task(
-                    channel_id.clone(),
-                    rx,
-                    writer.clone(),
-                );
+                spawn_stream_task(channel_id.clone(), rx, writer.clone());
             } else {
                 responses.push(Connection::create_live_audio_start_response(
-                    channel_id, false, "Channel not found",
+                    channel_id,
+                    false,
+                    "Channel not found",
                 ));
             }
         }
@@ -227,7 +217,8 @@ async fn handle_event(
         }
         ConnectionEvent::RecordingFetchRequested { recording_id } => {
             responses.push(Connection::create_recording_fetch_error(
-                recording_id, "Not implemented",
+                recording_id,
+                "Not implemented",
             ));
         }
         ConnectionEvent::DeviceStatusRequested => {
@@ -338,12 +329,8 @@ fn spawn_stream_task(
                         .unwrap_or_default()
                         .as_millis() as i64;
 
-                    let chunk_frame = Connection::create_live_audio_chunk(
-                        &channel_id,
-                        &opus_data,
-                        sequence,
-                        now,
-                    );
+                    let chunk_frame =
+                        Connection::create_live_audio_chunk(&channel_id, &opus_data, sequence, now);
                     sequence = sequence.wrapping_add(1);
 
                     let mut w = writer.lock().await;
@@ -352,11 +339,7 @@ fn spawn_stream_task(
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(
-                        "Live audio lagged {} frames for channel {}",
-                        n,
-                        channel_id
-                    );
+                    tracing::warn!("Live audio lagged {} frames for channel {}", n, channel_id);
                     // Continue — the receiver is still active
                 }
                 Err(broadcast::error::RecvError::Closed) => {
@@ -370,15 +353,14 @@ fn spawn_stream_task(
 }
 
 /// Handle a control command and return a response frame.
-fn handle_control_command(
-    engine: &mut AudioEngine,
-    cmd: &ControlCommand,
-) -> Vec<u8> {
+fn handle_control_command(engine: &mut AudioEngine, cmd: &ControlCommand) -> Vec<u8> {
     match cmd.control_type() {
         ControlType::SetChannelRecording => {
             let enabled = match &cmd.payload {
                 Some(control_command::Payload::RecordingEnabled(e)) => *e,
-                _ => return Connection::create_control_response(false, "Missing recording_enabled"),
+                _ => {
+                    return Connection::create_control_response(false, "Missing recording_enabled")
+                }
             };
             if let Some(ch) = engine.get_channel_mut(&cmd.channel_id) {
                 ch.recording_enabled = enabled;

@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-use rl_audio::engine::AudioEngine;
 use rl_audio::encoder::Bitrate;
+use rl_audio::engine::AudioEngine;
 use rl_core::config::Config;
 use rl_core::device_id::DeviceId;
 use rl_crypto::key::KeyPair;
@@ -65,7 +65,8 @@ impl Transmitter {
         frequency: f64,
         bitrate: Bitrate,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.engine.add_test_channel(channel_id, frequency, bitrate)?;
+        self.engine
+            .add_test_channel(channel_id, frequency, bitrate)?;
         Ok(())
     }
 

@@ -96,7 +96,10 @@ impl AudioEngine {
 
     /// Get ChannelInfo for all channels.
     pub fn channel_infos(&self) -> Vec<ChannelInfo> {
-        self.channels.values().map(|ch| ch.to_channel_info()).collect()
+        self.channels
+            .values()
+            .map(|ch| ch.to_channel_info())
+            .collect()
     }
 }
 
@@ -161,9 +164,21 @@ mod tests {
             .collect();
 
         // Encode each channel independently
-        let frames_a = engine.get_channel_mut("ch-A").unwrap().encode(&pcm_a).unwrap();
-        let frames_b = engine.get_channel_mut("ch-B").unwrap().encode(&pcm_b).unwrap();
-        let frames_c = engine.get_channel_mut("ch-C").unwrap().encode(&pcm_c).unwrap();
+        let frames_a = engine
+            .get_channel_mut("ch-A")
+            .unwrap()
+            .encode(&pcm_a)
+            .unwrap();
+        let frames_b = engine
+            .get_channel_mut("ch-B")
+            .unwrap()
+            .encode(&pcm_b)
+            .unwrap();
+        let frames_c = engine
+            .get_channel_mut("ch-C")
+            .unwrap()
+            .encode(&pcm_c)
+            .unwrap();
 
         // Each should produce output
         assert!(!frames_a.is_empty());
@@ -197,8 +212,14 @@ mod tests {
             .add_test_channel("ch-32".into(), 440.0, Bitrate::Kbps32)
             .unwrap();
 
-        assert_eq!(engine.get_channel("ch-16").unwrap().bitrate, Bitrate::Kbps16);
-        assert_eq!(engine.get_channel("ch-32").unwrap().bitrate, Bitrate::Kbps32);
+        assert_eq!(
+            engine.get_channel("ch-16").unwrap().bitrate,
+            Bitrate::Kbps16
+        );
+        assert_eq!(
+            engine.get_channel("ch-32").unwrap().bitrate,
+            Bitrate::Kbps32
+        );
 
         // Change bitrate on one channel
         engine
@@ -206,8 +227,14 @@ mod tests {
             .unwrap()
             .set_bitrate(Bitrate::Kbps128)
             .unwrap();
-        assert_eq!(engine.get_channel("ch-16").unwrap().bitrate, Bitrate::Kbps128);
+        assert_eq!(
+            engine.get_channel("ch-16").unwrap().bitrate,
+            Bitrate::Kbps128
+        );
         // Other channel unchanged
-        assert_eq!(engine.get_channel("ch-32").unwrap().bitrate, Bitrate::Kbps32);
+        assert_eq!(
+            engine.get_channel("ch-32").unwrap().bitrate,
+            Bitrate::Kbps32
+        );
     }
 }
