@@ -12,7 +12,7 @@ pub struct AudioChunk {
 }
 
 /// Trait for audio input sources.
-pub trait AudioInput {
+pub trait AudioInput: Send {
     /// Start capturing audio. Returns a receiver for audio chunks.
     fn start(&mut self) -> Result<mpsc::Receiver<AudioChunk>, AudioError>;
 
