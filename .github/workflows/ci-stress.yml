@@ -1,0 +1,27 @@
+name: Stress Test
+
+on:
+  schedule:
+    - cron: '13 2 * * 1'    # 每周一凌晨 2:13 UTC
+  workflow_dispatch:
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libopus-dev libclang-dev protobuf-compiler
+
+      - name: 100x disconnect/reconnect
+        run: cargo test --test stress -- --nocapture
+
+      - name: Large recording set (1000 files)
+        run: cargo test --test large_recording_set -- --nocapture
+
+      - name: Multi-receiver concurrent control
+        run: cargo test --test concurrent_control -- --nocapture

@@ -1,0 +1,46 @@
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '7 3 * * *'    # 每天凌晨 3:07 UTC
+  workflow_dispatch:        # 手动触发
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly   # fuzz 需要 nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libopus-dev libclang-dev protobuf-compiler
+
+      - name: Fuzz RLP frame parser
+        run: cargo fuzz run rlp_frame_parse -- -max_total_time=600    # 10 分钟
+
+      - name: Fuzz recording file parser
+        run: cargo fuzz run recording_file_parse -- -max_total_time=600
+
+      - name: Fuzz proto decoder
+        run: cargo fuzz run proto_decode -- -max_total_time=300       # 5 分钟
+
+      - name: Fuzz key transfer blob
+        run: cargo fuzz run key_transfer_blob -- -max_total_time=300
+
+      - name: Check for crashes
+        run: |
+          if ls fuzz/artifacts/*/crash-* 2>/dev/null; then
+            echo "::error::Fuzz found crashes!"
+            exit 1
+          fi
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: fuzz/artifacts/
+          retention-days: 30

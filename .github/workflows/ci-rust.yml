@@ -1,0 +1,110 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'proto/**'
+      - 'tests/**'
+      - 'fuzz/**'
+      - '.github/workflows/ci-rust.yml'
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'proto/**'
+      - 'tests/**'
+      - 'fuzz/**'
+      - '.github/workflows/ci-rust.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Job 1: Linux — 全部 Rust 测试（主力）
+  # ──────────────────────────────────────────────
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libopus-dev libclang-dev protobuf-compiler
+
+      - name: Build
+        run: cargo build --workspace
+
+      - name: Unit tests
+        run: cargo test --workspace --lib
+
+      - name: Integration tests
+        run: cargo test --workspace --test '*'
+
+      - name: Doc tests
+        run: cargo test --workspace --doc
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+  # ──────────────────────────────────────────────
+  # Job 2: Windows — 编译 + 测试（验证跨平台）
+  # ──────────────────────────────────────────────
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install vcpkg deps
+        run: vcpkg install opus:x64-windows protobuf:x64-windows
+
+      - name: Build
+        env:
+          OPUS_LIB_DIR: ${{ github.workspace }}\vcpkg\installed\x64-windows\lib
+        run: cargo build --workspace
+
+      - name: Tests (exclude real-device tests)
+        env:
+          OPUS_LIB_DIR: ${{ github.workspace }}\vcpkg\installed\x64-windows\lib
+        run: cargo test --workspace --lib -- --skip real_device
+
+  # ──────────────────────────────────────────────
+  # Job 3: 交叉验证 fixture 生成（存 artifact）
+  # ──────────────────────────────────────────────
+  generate-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - run: sudo apt-get update && sudo apt-get install -y libopus-dev libclang-dev protobuf-compiler
+
+      - name: Generate cross-platform fixtures
+        run: cargo test --test fixture_gen -- --nocapture
+
+      - name: Upload fixtures
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-fixtures
+          path: fixtures/
+          retention-days: 1

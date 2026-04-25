@@ -1,0 +1,95 @@
+name: iOS CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'receiver/**'
+      - 'proto/**'
+      - 'fixtures/**'
+      - '.github/workflows/ci-ios.yml'
+  pull_request:
+    paths:
+      - 'receiver/**'
+      - 'proto/**'
+      - 'fixtures/**'
+      - '.github/workflows/ci-ios.yml'
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Job 1: iOS 编译检查
+  # ──────────────────────────────────────────────
+  ios-build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Build iOS
+        run: |
+          cd receiver
+          xcodebuild build \
+            -project RemoteListener.xcodeproj \
+            -scheme RemoteListener \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            CODE_SIGNING_ALLOWED=NO
+
+  # ──────────────────────────────────────────────
+  # Job 2: iOS 单元测试 + 交叉验证
+  # ──────────────────────────────────────────────
+  ios-test:
+    runs-on: macos-14
+    needs: generate-fixtures
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Rust fixtures
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-fixtures
+          path: fixtures/
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Run iOS tests (simulator)
+        run: |
+          cd receiver
+          xcodebuild test \
+            -project RemoteListener.xcodeproj \
+            -scheme CrossPlatformTests \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload Swift fixtures
+        uses: actions/upload-artifact@v4
+        with:
+          name: swift-fixtures
+          path: fixtures/swift/
+          retention-days: 1
+
+  # ──────────────────────────────────────────────
+  # Job 3: Swift fixture → Rust 验证
+  # ──────────────────────────────────────────────
+  verify-swift-fixtures:
+    runs-on: ubuntu-latest
+    needs: ios-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: sudo apt-get update && sudo apt-get install -y libopus-dev libclang-dev protobuf-compiler
+
+      - name: Download Swift fixtures
+        uses: actions/download-artifact@v4
+        with:
+          name: swift-fixtures
+          path: fixtures/swift/
+
+      - name: Verify Swift-generated fixtures with Rust
+        run: cargo test --test cross_platform_verify
