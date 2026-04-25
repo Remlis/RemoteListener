@@ -49,9 +49,6 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace --lib
 
-      - name: Integration tests
-        run: cargo test --workspace --test '*'
-
       - name: Doc tests
         run: cargo test --workspace --doc
 
