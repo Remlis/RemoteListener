@@ -1,6 +1,5 @@
 /target
 **/*.rs.bk
-Cargo.lock
 *.rlrec
 *.rlrec.tmp
 .DS_Store

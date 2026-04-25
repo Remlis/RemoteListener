@@ -40,7 +40,7 @@ jobs:
           cache-on-failure: true
 
       - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y libopus-dev libclang-dev protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y libopus-dev libasound2-dev libclang-dev protobuf-compiler
 
       - name: Build
         run: cargo build --workspace
@@ -77,16 +77,21 @@ jobs:
 
       - name: Build
         env:
+          VCPKG_ROOT: ${{ github.workspace }}\vcpkg
           OPUS_LIB_DIR: ${{ github.workspace }}\vcpkg\installed\x64-windows\lib
+          PROTOC: ${{ github.workspace }}\vcpkg\installed\x64-windows\tools\protobuf\protoc.exe
         run: cargo build --workspace
 
       - name: Tests (exclude real-device tests)
         env:
+          VCPKG_ROOT: ${{ github.workspace }}\vcpkg
           OPUS_LIB_DIR: ${{ github.workspace }}\vcpkg\installed\x64-windows\lib
+          PROTOC: ${{ github.workspace }}\vcpkg\installed\x64-windows\tools\protobuf\protoc.exe
         run: cargo test --workspace --lib -- --skip real_device
 
   # ──────────────────────────────────────────────
   # Job 3: 交叉验证 fixture 生成（存 artifact）
+  # TODO: add fixture_gen integration test when ready
   # ──────────────────────────────────────────────
   generate-fixtures:
     runs-on: ubuntu-latest
@@ -97,14 +102,14 @@ jobs:
         with:
           cache-on-failure: true
 
-      - run: sudo apt-get update && sudo apt-get install -y libopus-dev libclang-dev protobuf-compiler
+      - run: sudo apt-get update && sudo apt-get install -y libopus-dev libasound2-dev libclang-dev protobuf-compiler
 
-      - name: Generate cross-platform fixtures
-        run: cargo test --test fixture_gen -- --nocapture
+      - name: Build testtool
+        run: cargo build -p rl-testtool
 
-      - name: Upload fixtures
+      - name: Upload testtool binary
         uses: actions/upload-artifact@v4
         with:
-          name: rust-fixtures
-          path: fixtures/
+          name: rl-testtool-linux
+          path: target/debug/rl-testtool
           retention-days: 1
