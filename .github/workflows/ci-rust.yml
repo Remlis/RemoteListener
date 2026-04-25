@@ -79,18 +79,18 @@ jobs:
           echo "$env:GITHUB_WORKSPACE\protoc\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Install vcpkg deps
-        run: vcpkg install opus:x64-windows
+        run: vcpkg install opus:x64-windows-static
 
       - name: Build
         env:
-          VCPKG_ROOT: ${{ github.workspace }}\vcpkg
-          OPUS_LIB_DIR: ${{ github.workspace }}\vcpkg\installed\x64-windows\lib
+          VCPKG_ROOT: C:\vcpkg
+          OPUS_LIB_DIR: C:\vcpkg\installed\x64-windows-static\lib
         run: cargo build --workspace
 
       - name: Tests (exclude real-device tests)
         env:
-          VCPKG_ROOT: ${{ github.workspace }}\vcpkg
-          OPUS_LIB_DIR: ${{ github.workspace }}\vcpkg\installed\x64-windows\lib
+          VCPKG_ROOT: C:\vcpkg
+          OPUS_LIB_DIR: C:\vcpkg\installed\x64-windows-static\lib
         run: cargo test --workspace --lib -- --skip real_device
 
   # ──────────────────────────────────────────────
