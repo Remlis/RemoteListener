@@ -16,7 +16,7 @@ on:
       - '.github/workflows/ci-ios.yml'
 
 jobs:
-  # TODO: Enable when Xcode project is set up
-  # ios-build:
-  #   runs-on: macos-14
-  #   ...
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "iOS CI disabled until Xcode project is set up"
