@@ -12,6 +12,7 @@ use rl_core::device_id::DeviceId;
 use rl_crypto::key::KeyPair;
 use rl_net::connection::Connection;
 
+#[allow(dead_code)]
 mod server;
 
 /// The transmitter application.
