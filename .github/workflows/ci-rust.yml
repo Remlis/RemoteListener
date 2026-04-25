@@ -23,6 +23,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
   # ──────────────────────────────────────────────
@@ -40,10 +41,10 @@ jobs:
           cache-on-failure: true
 
       - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y libopus-dev libasound2-dev libclang-dev protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libopus-dev libasound2-dev libclang-dev protobuf-compiler
 
       - name: Build
-        run: cargo build --workspace
+        run: cargo build --workspace -v
 
       - name: Unit tests
         run: cargo test --workspace --lib
@@ -102,7 +103,7 @@ jobs:
         with:
           cache-on-failure: true
 
-      - run: sudo apt-get update && sudo apt-get install -y libopus-dev libasound2-dev libclang-dev protobuf-compiler
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libopus-dev libasound2-dev libclang-dev protobuf-compiler
 
       - name: Build testtool
         run: cargo build -p rl-testtool
