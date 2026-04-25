@@ -2384,7 +2384,9 @@ dependencies = [
 name = "rl-transmitter"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "dirs",
+ "rand 0.8.6",
  "rl-audio",
  "rl-core",
  "rl-crypto",
@@ -2395,6 +2397,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "x25519-dalek",
 ]
 
 [[package]]

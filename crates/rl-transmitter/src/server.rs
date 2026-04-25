@@ -8,28 +8,145 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, Mutex};
 
+use aes_gcm::aead::Aead;
 use rl_audio::capture::AudioChunk;
 use rl_audio::encoder::Bitrate;
 use rl_audio::engine::AudioEngine;
 use rl_core::proto::*;
+use rl_crypto::key::KeyPair;
 use rl_net::connection::{Connection, ConnectionEvent};
 use rl_net::frame;
+
+/// Unique ID for a connected receiver.
+type ConnectionId = u64;
+
+/// Per-connection state tracked by the ConnectionManager.
+struct ReceiverInfo {
+    device_name: String,
+    is_paired: bool,
+    fingerprint: Option<Vec<u8>>,
+    subscribed_channels: HashSet<String>,
+}
+
+/// Manages all connected receivers.
+pub struct ConnectionManager {
+    next_id: ConnectionId,
+    receivers: HashMap<ConnectionId, ReceiverInfo>,
+    /// Paired receiver fingerprints persisted across connections.
+    paired_fingerprints: HashSet<Vec<u8>>,
+}
+
+impl ConnectionManager {
+    pub fn new() -> Self {
+        Self {
+            next_id: 0,
+            receivers: HashMap::new(),
+            paired_fingerprints: HashSet::new(),
+        }
+    }
+
+    /// Register a new connection, returning its ID.
+    pub fn add_connection(&mut self, device_name: String) -> ConnectionId {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.receivers.insert(
+            id,
+            ReceiverInfo {
+                device_name,
+                is_paired: false,
+                fingerprint: None,
+                subscribed_channels: HashSet::new(),
+            },
+        );
+        id
+    }
+
+    /// Remove a connection, returning its subscribed channels for cleanup.
+    pub fn remove_connection(&mut self, id: ConnectionId) -> HashSet<String> {
+        if let Some(info) = self.receivers.remove(&id) {
+            info.subscribed_channels
+        } else {
+            HashSet::new()
+        }
+    }
+
+    /// Mark a receiver as paired.
+    pub fn set_paired(&mut self, id: ConnectionId, fingerprint: Vec<u8>) {
+        if let Some(info) = self.receivers.get_mut(&id) {
+            info.is_paired = true;
+            info.fingerprint = Some(fingerprint.clone());
+            self.paired_fingerprints.insert(fingerprint);
+        }
+    }
+
+    /// Unpair a receiver by fingerprint.
+    pub fn unpair(&mut self, fingerprint: &[u8]) {
+        self.paired_fingerprints.remove(fingerprint);
+        for info in self.receivers.values_mut() {
+            if info.fingerprint.as_deref() == Some(fingerprint) {
+                info.is_paired = false;
+                info.fingerprint = None;
+            }
+        }
+    }
+
+    /// Check if a receiver is paired.
+    pub fn is_paired(&self, id: ConnectionId) -> bool {
+        self.receivers
+            .get(&id)
+            .map(|i| i.is_paired)
+            .unwrap_or(false)
+    }
+
+    /// Add a channel subscription for a receiver.
+    pub fn subscribe(&mut self, id: ConnectionId, channel_id: &str) {
+        if let Some(info) = self.receivers.get_mut(&id) {
+            info.subscribed_channels.insert(channel_id.to_string());
+        }
+    }
+
+    /// Remove a channel subscription for a receiver.
+    pub fn unsubscribe(&mut self, id: ConnectionId, channel_id: &str) {
+        if let Some(info) = self.receivers.get_mut(&id) {
+            info.subscribed_channels.remove(channel_id);
+        }
+    }
+
+    /// Get the list of paired fingerprint bytes.
+    pub fn paired_fingerprints(&self) -> Vec<Vec<u8>> {
+        self.paired_fingerprints.iter().cloned().collect()
+    }
+
+    /// Number of connected receivers.
+    pub fn connection_count(&self) -> usize {
+        self.receivers.len()
+    }
+
+    /// Number of paired receivers (including offline).
+    pub fn paired_count(&self) -> usize {
+        self.paired_fingerprints.len()
+    }
+}
 
 /// Shared transmitter state accessible by all connections.
 pub struct TransmitterState {
     pub engine: Arc<Mutex<AudioEngine>>,
     pub device_name: String,
+    pub keypair: KeyPair,
     /// Broadcast senders for live audio per channel.
-    /// Each sender carries encoded Opus frames (Vec<u8>).
     audio_senders: Mutex<HashMap<String, broadcast::Sender<Vec<u8>>>>,
+    /// Connection manager for tracking receivers.
+    connections: Mutex<ConnectionManager>,
 }
 
 impl TransmitterState {
-    pub fn new(engine: Arc<Mutex<AudioEngine>>, device_name: String) -> Self {
+    pub fn new(engine: Arc<Mutex<AudioEngine>>, device_name: String, keypair: KeyPair) -> Self {
         Self {
             engine,
             device_name,
+            keypair,
             audio_senders: Mutex::new(HashMap::new()),
+            connections: Mutex::new(ConnectionManager::new()),
         }
     }
 
@@ -98,8 +215,11 @@ async fn handle_connection(
     let hello_frame = conn.create_hello("0.1.0");
     writer.lock().await.write_all(&hello_frame).await?;
 
-    // Track streaming task cancellation per channel
-    let mut live_channels: HashSet<String> = HashSet::new();
+    // Register this connection
+    let conn_id = {
+        let mut mgr = state.connections.lock().await;
+        mgr.add_connection("unknown".to_string())
+    };
 
     let mut read_buf = Vec::new();
     let mut tmp = [0u8; 65536];
@@ -119,8 +239,7 @@ async fn handle_connection(
                     let events = conn.handle_frame(&decoded)?;
 
                     for event in events {
-                        let responses =
-                            handle_event(&event, &state, &mut live_channels, &writer).await;
+                        let responses = handle_event(&event, &state, conn_id, &writer).await;
                         let mut w = writer.lock().await;
                         for frame_bytes in responses {
                             w.write_all(&frame_bytes).await?;
@@ -136,20 +255,40 @@ async fn handle_connection(
         }
     }
 
+    // Cleanup: remove connection and unsubscribe from all channels
+    let unsub_channels = {
+        let mut mgr = state.connections.lock().await;
+        mgr.remove_connection(conn_id)
+    };
+    for channel_id in &unsub_channels {
+        state.remove_sender(channel_id).await;
+    }
+    tracing::info!(
+        "Connection {} closed, unsubscribed from {} channels",
+        conn_id,
+        unsub_channels.len()
+    );
+
     Ok(())
 }
 
 /// Handle a connection event, returning response frames to send back.
-/// Also spawns/cancels live audio streaming tasks as needed.
 async fn handle_event(
     event: &ConnectionEvent,
     state: &Arc<TransmitterState>,
-    live_channels: &mut HashSet<String>,
+    conn_id: ConnectionId,
     writer: &Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
 ) -> Vec<Vec<u8>> {
     let mut responses = Vec::new();
 
     match event {
+        ConnectionEvent::HelloReceived { device_name, .. } => {
+            let mut mgr = state.connections.lock().await;
+            if let Some(info) = mgr.receivers.get_mut(&conn_id) {
+                info.device_name = device_name.clone();
+            }
+            tracing::info!("Hello from {} (conn {})", device_name, conn_id);
+        }
         ConnectionEvent::ChannelListRequested => {
             let engine = state.engine.lock().await;
             let infos = engine.channel_infos();
@@ -168,7 +307,12 @@ async fn handle_event(
                 responses.push(Connection::create_live_audio_start_response(
                     channel_id, true, "",
                 ));
-                live_channels.insert(channel_id.clone());
+
+                // Track subscription
+                {
+                    let mut mgr = state.connections.lock().await;
+                    mgr.subscribe(conn_id, channel_id);
+                }
 
                 // If this is the first subscriber, start the capture task
                 if receiver_count == 0 {
@@ -187,20 +331,85 @@ async fn handle_event(
             }
         }
         ConnectionEvent::LiveAudioStopRequested { channel_id } => {
-            live_channels.remove(channel_id);
-            // The stream task will end when its broadcast receiver is dropped
-            // (Lagged messages are handled gracefully)
+            {
+                let mut mgr = state.connections.lock().await;
+                mgr.unsubscribe(conn_id, channel_id);
+            }
             state.remove_sender(channel_id).await;
         }
         ConnectionEvent::ControlCommandReceived { command } => {
-            let mut engine = state.engine.lock().await;
-            responses.push(handle_control_command(&mut engine, command));
+            // Only paired receivers can issue control commands
+            let is_paired = {
+                let mgr = state.connections.lock().await;
+                mgr.is_paired(conn_id)
+            };
+            if is_paired {
+                let mut engine = state.engine.lock().await;
+                responses.push(handle_control_command(&mut engine, command));
+
+                // Notify all other connected receivers about state change
+                let infos = engine.channel_infos();
+                let status_frame =
+                    Connection::create_device_status(&state.device_name, infos, None, 0);
+                // TODO: push status_frame to all other connections
+                let _ = status_frame;
+            } else {
+                responses.push(Connection::create_control_response(false, "Not authorized"));
+            }
         }
-        ConnectionEvent::HelloReceived { .. } => {
-            tracing::info!("Hello exchange completed");
+        ConnectionEvent::PairRequested {
+            device_name: _,
+            public_key,
+        } => {
+            // Derive KEK from ECDH with the receiver's public key
+            let their_public = x25519_dalek::PublicKey::from(
+                <[u8; 32]>::try_from(public_key.as_slice()).unwrap_or([0u8; 32]),
+            );
+            let shared = state.keypair.diffie_hellman(&their_public);
+            let kek = shared.derive_kek(b"rl-pairing/v1");
+
+            // Encrypt the transmitter's private key with the KEK
+            let private_key_bytes = state.keypair.secret_bytes();
+            let mut nonce_bytes = [0u8; 12];
+            rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
+            let nonce = aes_gcm::Nonce::from_slice(&nonce_bytes);
+            let encrypted_key = kek
+                .encrypt(nonce, private_key_bytes.as_slice())
+                .unwrap_or_default();
+
+            // Build the encrypted private key blob: nonce(12) + ciphertext+tag
+            let mut private_key_blob = Vec::with_capacity(12 + encrypted_key.len());
+            private_key_blob.extend_from_slice(&nonce_bytes);
+            private_key_blob.extend_from_slice(&encrypted_key);
+
+            let existing_fps = {
+                let mgr = state.connections.lock().await;
+                mgr.paired_fingerprints()
+            };
+
+            responses.push(Connection::create_pair_response(
+                state.keypair.public_key().as_bytes().to_vec(),
+                private_key_blob,
+                existing_fps,
+            ));
+        }
+        ConnectionEvent::PairConfirmed { accepted } => {
+            if *accepted {
+                tracing::info!("Pairing confirmed for conn {}", conn_id);
+                // The fingerprint will be set when we receive the receiver's
+                // public key in the PairRequest. For now, mark as paired.
+                let mut mgr = state.connections.lock().await;
+                mgr.set_paired(conn_id, vec![]); // TODO: use actual fingerprint
+            } else {
+                tracing::info!("Pairing rejected for conn {}", conn_id);
+            }
+        }
+        ConnectionEvent::Unpaired { fingerprint } => {
+            let mut mgr = state.connections.lock().await;
+            mgr.unpair(fingerprint);
+            tracing::info!("Unpaired fingerprint (conn {})", conn_id);
         }
         ConnectionEvent::PingReceived { .. } => {
-            // Pong is sent as a PING frame back (echo protocol)
             let ping = Ping {
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -210,7 +419,7 @@ async fn handle_event(
             responses.push(frame::encode_message(MessageType::Ping, &ping));
         }
         ConnectionEvent::Closed { reason } => {
-            tracing::info!("Connection closed: {}", reason);
+            tracing::info!("Connection {} closed: {}", conn_id, reason);
         }
         ConnectionEvent::RecordingListRequested { .. } => {
             responses.push(Connection::create_recording_list_response(vec![]));
@@ -276,7 +485,6 @@ fn spawn_capture_task(
 
         // Read PCM chunks, encode, and broadcast
         while let Some(chunk) = async_rx.recv().await {
-            // Encode the PCM samples
             let opus_frames = {
                 let mut engine = state.engine.lock().await;
                 if let Some(ch) = engine.get_channel_mut(&channel_id) {
@@ -292,18 +500,15 @@ fn spawn_capture_task(
                 }
             };
 
-            // Broadcast each Opus frame
             for frame in opus_frames {
                 if tx.send(frame).is_err() {
-                    // No receivers left
-                    break;
+                    break; // No receivers left
                 }
             }
         }
 
         tracing::info!("Capture task ended for channel {}", channel_id);
 
-        // Stop capturing
         let mut engine = state.engine.lock().await;
         if let Some(ch) = engine.get_channel_mut(&channel_id) {
             ch.input_mut().stop();
@@ -340,7 +545,6 @@ fn spawn_stream_task(
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!("Live audio lagged {} frames for channel {}", n, channel_id);
-                    // Continue — the receiver is still active
                 }
                 Err(broadcast::error::RecvError::Closed) => {
                     break; // Sender dropped, no more data
