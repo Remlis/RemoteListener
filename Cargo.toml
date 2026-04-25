@@ -1,0 +1,73 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rl-core",
+    "crates/rl-transmitter",
+    "crates/rl-audio",
+    "crates/rl-crypto",
+    "crates/rl-net",
+    "crates/rl-tray",
+    "crates/rl-testtool",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Protobuf
+prost = "0.13"
+prost-types = "0.13"
+prost-build = "0.13"
+
+# Crypto
+aes-gcm = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
+rcgen = "0.14"
+
+# TLS
+rustls = "0.23"
+tokio-rustls = "0.26"
+
+# QUIC
+quinn = "0.11"
+
+# Audio
+cpal = "0.17"
+opus = "0.3"
+
+# Config
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# mDNS
+mdns = "3"
+
+# System tray
+tray-icon = "0.22"
+
+# HTTP
+reqwest = { version = "0.12", features = ["json"] }
+
+# Testing
+proptest = "1"
+tempfile = "3"
+thiserror = "2"
+data-encoding = "2"
+hostname = "0.4"
+dirs = "6"

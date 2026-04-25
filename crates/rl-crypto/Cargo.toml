@@ -1,0 +1,18 @@
+[package]
+name = "rl-crypto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rl-core = { path = "../rl-core" }
+aes-gcm = { workspace = true }
+x25519-dalek = { workspace = true }
+hkdf = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+scrypt = "0.11"
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

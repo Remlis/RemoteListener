@@ -1,0 +1,26 @@
+[package]
+name = "rl-fuzz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rl-core = { path = "../crates/rl-core" }
+rl-crypto = { path = "../crates/rl-crypto" }
+prost = { workspace = true }
+
+[[bin]]
+name = "rlp_frame_parse"
+path = "fuzz_targets/rlp_frame_parse.rs"
+
+[[bin]]
+name = "recording_file_parse"
+path = "fuzz_targets/recording_file_parse.rs"
+
+[[bin]]
+name = "proto_decode"
+path = "fuzz_targets/proto_decode.rs"
+
+[[bin]]
+name = "key_transfer_blob"
+path = "fuzz_targets/key_transfer_blob.rs"

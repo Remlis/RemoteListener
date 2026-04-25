@@ -1,0 +1,16 @@
+[package]
+name = "rl-net"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rl-core = { path = "../rl-core" }
+tokio = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+quinn = { workspace = true }
+prost = { workspace = true }
+tracing = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }
+async-trait = "0.1"

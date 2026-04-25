@@ -1,0 +1,141 @@
+//! rl-transmitter: remote audio monitoring daemon.
+//!
+//! Captures audio from multiple inputs, encrypts and saves recordings,
+//! and serves them to paired receivers over TLS.
+
+use std::path::Path;
+
+use rl_audio::channel::AudioChannel;
+use rl_audio::encoder::Bitrate;
+use rl_core::config::Config;
+use rl_core::device_id::DeviceId;
+use rl_crypto::key::KeyPair;
+use rl_net::connection::Connection;
+
+mod server;
+
+/// The transmitter application.
+pub struct Transmitter {
+    config: Config,
+    device_id: DeviceId,
+    keypair: KeyPair,
+    channels: Vec<AudioChannel>,
+    #[allow(dead_code)]
+    connection: Option<Connection>,
+}
+
+impl Transmitter {
+    /// Create a new transmitter instance.
+    pub fn new(config: Config) -> Result<Self, Box<dyn std::error::Error>> {
+        // Load or generate Device ID + certificate
+        let (device_id, _cert) = DeviceId::generate()?;
+
+        // Load or generate X25519 keypair
+        let keypair = Self::load_or_generate_keypair(&config.keypair_path)?;
+
+        Ok(Self {
+            config,
+            device_id,
+            keypair,
+            channels: Vec::new(),
+            connection: None,
+        })
+    }
+
+    /// Get the device ID display string.
+    pub fn device_id_display(&self) -> &str {
+        self.device_id.display()
+    }
+
+    /// Get the keypair.
+    pub fn keypair(&self) -> &KeyPair {
+        &self.keypair
+    }
+
+    /// Get the public key fingerprint.
+    pub fn public_key_fingerprint(&self) -> [u8; 32] {
+        self.keypair.fingerprint()
+    }
+
+    /// Add a test sine wave channel.
+    pub fn add_test_channel(
+        &mut self,
+        channel_id: String,
+        frequency: f64,
+        bitrate: Bitrate,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let channel = AudioChannel::new_test(channel_id, frequency, bitrate)?;
+        self.channels.push(channel);
+        Ok(())
+    }
+
+    /// List channels.
+    pub fn channels(&self) -> &[AudioChannel] {
+        &self.channels
+    }
+
+    /// Get the listen port.
+    pub fn listen_port(&self) -> u16 {
+        self.config.listen_port
+    }
+
+    /// Get a reference to config.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    fn load_or_generate_keypair(path: &Path) -> Result<KeyPair, Box<dyn std::error::Error>> {
+        if path.exists() {
+            let bytes = std::fs::read(path)?;
+            if bytes.len() == 32 {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&bytes);
+                return Ok(KeyPair::from_bytes(key));
+            }
+        }
+        let keypair = KeyPair::generate();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, keypair.secret_bytes())?;
+        Ok(keypair)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transmitter_starts() {
+        let config = Config {
+            device_name: "TestTransmitter".into(),
+            listen_port: 22001,
+            recording_dir: std::env::temp_dir().join("rl-test-tx"),
+            auto_delete_days: 0,
+            default_bitrate: 16,
+            keypair_path: std::env::temp_dir().join("rl-test-tx-keypair.bin"),
+        };
+        let tx = Transmitter::new(config).unwrap();
+        assert!(!tx.device_id_display().is_empty());
+        assert_eq!(tx.listen_port(), 22001);
+    }
+
+    #[test]
+    fn transmitter_adds_channels() {
+        let config = Config {
+            device_name: "TestTransmitter".into(),
+            listen_port: 22002,
+            recording_dir: std::env::temp_dir().join("rl-test-tx2"),
+            auto_delete_days: 0,
+            default_bitrate: 16,
+            keypair_path: std::env::temp_dir().join("rl-test-tx2-keypair.bin"),
+        };
+        let mut tx = Transmitter::new(config).unwrap();
+        tx.add_test_channel("ch-001".into(), 440.0, Bitrate::Kbps16)
+            .unwrap();
+        tx.add_test_channel("ch-002".into(), 880.0, Bitrate::Kbps32)
+            .unwrap();
+        assert_eq!(tx.channels().len(), 2);
+    }
+}

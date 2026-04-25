@@ -1,0 +1,9 @@
+[package]
+name = "rl-tray"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rl-core = { path = "../rl-core" }
+tray-icon = { workspace = true }
+tracing = { workspace = true }

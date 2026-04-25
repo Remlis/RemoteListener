@@ -1,0 +1,231 @@
+syntax = "proto3";
+
+package rl.protocol;
+
+// ──────────────────────────────────────────────
+// Message types
+// ──────────────────────────────────────────────
+
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+
+  // Handshake
+  HELLO = 1;
+  PAIR_REQUEST = 2;
+  PAIR_RESPONSE = 3;
+  PAIR_CONFIRM = 4;
+  PING = 5;
+  CLOSE = 6;
+  UNPAIR = 7;
+
+  // Channel management
+  CHANNEL_LIST_REQUEST = 8;
+  CHANNEL_LIST = 9;
+
+  // Recording
+  RECORDING_LIST_REQUEST = 10;
+  RECORDING_LIST_RESPONSE = 11;
+  RECORDING_FETCH_REQUEST = 12;
+  RECORDING_CHUNK = 13;
+  RECORDING_FETCH_COMPLETE = 14;
+  RECORDING_FETCH_ERROR = 15;
+
+  // Live audio
+  LIVE_AUDIO_START = 20;
+  LIVE_AUDIO_START_RESPONSE = 23;
+  LIVE_AUDIO_STOP = 21;
+  LIVE_AUDIO_CHUNK = 22;
+
+  // Remote control
+  CONTROL_COMMAND = 30;
+  CONTROL_RESPONSE = 31;
+
+  // Device status
+  DEVICE_STATUS = 40;
+}
+
+// ──────────────────────────────────────────────
+// Frame header
+// ──────────────────────────────────────────────
+
+message Header {
+  MessageType type = 1;
+  bool compressed = 2;
+}
+
+// ──────────────────────────────────────────────
+// Handshake messages
+// ──────────────────────────────────────────────
+
+message Hello {
+  string device_name = 1;
+  string client_version = 2;
+  int64 timestamp = 3;
+}
+
+message PairRequest {
+  string device_name = 1;
+  bytes public_key = 2;       // X25519 public key of the receiver
+}
+
+message PairResponse {
+  bytes public_key = 1;       // X25519 public key of the transmitter
+  bytes private_key = 2;      // X25519 private key (transferred to receiver, then deleted)
+  repeated bytes existing_key_fingerprints = 3;  // SHA-256 fingerprints of existing paired keys
+}
+
+message PairConfirm {
+  bool accepted = 1;
+}
+
+message Unpair {
+  bytes public_key_fingerprint = 1;  // SHA-256 fingerprint of the key to unpair
+}
+
+// ──────────────────────────────────────────────
+// Channel management
+// ──────────────────────────────────────────────
+
+message ChannelListRequest {}
+
+message ChannelInfo {
+  string channel_id = 1;
+  string device_name = 2;
+  string device_uid = 3;
+  bool recording_enabled = 4;
+  bool is_active = 5;
+  uint32 bitrate = 6;
+  uint64 recorded_bytes = 7;
+}
+
+message ChannelList {
+  repeated ChannelInfo channels = 1;
+}
+
+// ──────────────────────────────────────────────
+// Recording messages
+// ──────────────────────────────────────────────
+
+message RecordingListRequest {
+  string channel_id = 1;      // optional filter
+}
+
+message RecordingInfo {
+  string recording_id = 1;
+  string channel_id = 2;
+  uint64 start_timestamp = 3;
+  uint64 end_timestamp = 4;
+  uint64 file_size = 5;
+  uint32 duration_seconds = 6;
+}
+
+message RecordingListResponse {
+  repeated RecordingInfo recordings = 1;
+}
+
+message RecordingFetchRequest {
+  string recording_id = 1;
+}
+
+message RecordingChunk {
+  string recording_id = 1;
+  bytes data = 2;
+  uint32 chunk_index = 3;
+  bool is_last = 4;
+}
+
+message RecordingFetchComplete {
+  string recording_id = 1;
+}
+
+message RecordingFetchError {
+  string recording_id = 1;
+  string error = 2;
+}
+
+// ──────────────────────────────────────────────
+// Live audio
+// ──────────────────────────────────────────────
+
+message LiveAudioStart {
+  string channel_id = 1;
+}
+
+message LiveAudioStartResponse {
+  string channel_id = 1;
+  bool success = 2;
+  string error = 3;           // error message if not success
+}
+
+message LiveAudioStop {
+  string channel_id = 1;
+}
+
+message LiveAudioChunk {
+  string channel_id = 1;
+  bytes data = 2;
+  uint32 sequence = 3;
+  int64 timestamp = 4;
+}
+
+// ──────────────────────────────────────────────
+// Remote control
+// ──────────────────────────────────────────────
+
+enum ControlType {
+  CONTROL_TYPE_UNSPECIFIED = 0;
+  SET_CHANNEL_RECORDING = 1;
+  SET_CHANNEL_BITRATE = 2;
+  DELETE_RECORDING = 3;
+  GET_STORAGE_INFO = 4;
+  SET_AUTO_DELETE_DAYS = 5;
+  RESTART = 6;
+}
+
+message ControlCommand {
+  ControlType control_type = 1;
+  string channel_id = 2;
+  oneof payload {
+    bool recording_enabled = 10;
+    uint32 bitrate = 11;
+    string recording_id = 12;
+    uint32 auto_delete_days = 13;
+  }
+}
+
+message ControlResponse {
+  bool success = 1;
+  string error = 2;
+  oneof payload {
+    StorageInfo storage_info = 10;
+  }
+}
+
+message StorageInfo {
+  uint64 total_bytes = 1;
+  uint64 used_bytes = 2;
+  uint64 recording_count = 3;
+}
+
+// ──────────────────────────────────────────────
+// Device status (transmitter → receiver, pushed)
+// ──────────────────────────────────────────────
+
+message DeviceStatus {
+  string device_name = 1;
+  repeated ChannelInfo channels = 2;
+  StorageInfo storage = 3;
+  uint64 uptime_seconds = 4;
+}
+
+// ──────────────────────────────────────────────
+// Heartbeat
+// ──────────────────────────────────────────────
+
+message Ping {
+  int64 timestamp = 1;
+}
+
+message Close {
+  string reason = 1;
+}

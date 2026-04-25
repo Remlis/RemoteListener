@@ -1,0 +1,18 @@
+[package]
+name = "rl-testtool"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rl-core = { path = "../rl-core" }
+rl-crypto = { path = "../rl-crypto" }
+rl-net = { path = "../rl-net" }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+rpassword = "7"
+
+[[bin]]
+name = "rl-testtool"
+path = "src/main.rs"
