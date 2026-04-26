@@ -35,6 +35,12 @@ pub struct ConnectionManager {
     paired_fingerprints: HashSet<Vec<u8>>,
 }
 
+impl Default for ConnectionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConnectionManager {
     pub fn new() -> Self {
         Self {
@@ -392,7 +398,7 @@ async fn handle_event(
                 mgr.is_paired(conn_id)
             };
             if is_paired {
-                let (resp, channels_changed) = handle_control_command(&state, command).await;
+                let (resp, channels_changed) = handle_control_command(state, command).await;
                 responses.push(resp);
 
                 // Notify all other connected receivers about state change
@@ -463,14 +469,14 @@ async fn handle_event(
             tracing::info!("Connection {} closed: {}", conn_id, reason);
         }
         ConnectionEvent::RecordingListRequested { channel_id } => {
-            let recordings = enumerate_recordings(&state.recording_dir, &channel_id);
+            let recordings = enumerate_recordings(&state.recording_dir, channel_id);
             responses.push(Connection::create_recording_list_response(recordings));
         }
         ConnectionEvent::RecordingFetchRequested { recording_id } => {
-            match fetch_recording(&state.recording_dir, &recording_id).await {
+            match fetch_recording(&state.recording_dir, recording_id).await {
                 Ok(chunks) => responses.extend(chunks),
                 Err(e) => responses.push(Connection::create_recording_fetch_error(
-                    &recording_id,
+                    recording_id,
                     &e.to_string(),
                 )),
             }
@@ -753,7 +759,7 @@ async fn fetch_recording(
             recording_id: recording_id.to_string(),
             data: chunk.to_vec(),
             chunk_index: i as u32,
-            is_last: i == (data.len() + chunk_size - 1) / chunk_size - 1,
+            is_last: i == data.len().div_ceil(chunk_size) - 1,
         };
         frames.push(frame::encode_message(MessageType::RecordingChunk, &chunk_msg));
     }
@@ -815,11 +821,9 @@ pub fn auto_delete_recordings(recording_dir: &std::path::Path, days: u32) -> usi
         }
         if let Ok(metadata) = std::fs::metadata(&path) {
             if let Ok(modified) = metadata.modified() {
-                if modified < cutoff {
-                    if std::fs::remove_file(&path).is_ok() {
-                        tracing::info!("Auto-deleted old recording: {:?}", path);
-                        deleted += 1;
-                    }
+                if modified < cutoff && std::fs::remove_file(&path).is_ok() {
+                    tracing::info!("Auto-deleted old recording: {:?}", path);
+                    deleted += 1;
                 }
             }
         }
