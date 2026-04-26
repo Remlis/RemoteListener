@@ -2,6 +2,7 @@
 
 use rl_core::config::Config;
 use rl_transmitter::Transmitter;
+use rl_transmitter::discovery::DiscoveryService;
 
 #[tokio::main]
 async fn main() {
@@ -34,9 +35,26 @@ async fn main() {
         tx.public_key_fingerprint()
     );
 
-    // TODO: Start audio capture, network server, tray
+    // Start mDNS service advertisement
+    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], tx.listen_port()));
+    let discovery = DiscoveryService::new(
+        &tx.config().device_name,
+        tx.device_id_display(),
+        addr,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("Failed to start mDNS discovery: {}", e);
+        std::process::exit(1);
+    });
+    println!("mDNS: advertising as {}.{}", discovery.service_name(), rl_transmitter::discovery::SERVICE_TYPE_SHORT);
+
     println!("Transmitter running. Press Ctrl+C to stop.");
 
     tokio::signal::ctrl_c().await.unwrap();
     println!("Shutting down.");
+
+    // Stop mDNS advertisement
+    if let Err(e) = discovery.stop() {
+        tracing::warn!("mDNS shutdown error: {}", e);
+    }
 }

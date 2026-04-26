@@ -14,6 +14,7 @@ use rl_net::connection::Connection;
 
 #[allow(dead_code)]
 mod server;
+pub mod discovery;
 
 /// The transmitter application.
 pub struct Transmitter {

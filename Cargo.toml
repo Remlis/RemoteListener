@@ -55,8 +55,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # CLI
 clap = { version = "4", features = ["derive"] }
 
-# mDNS
-mdns = "3"
+# mDNS / DNS-SD
+mdns-sd = "0.19"
 
 # System tray
 tray-icon = "0.22"

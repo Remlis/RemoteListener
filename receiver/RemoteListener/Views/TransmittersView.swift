@@ -36,7 +36,8 @@ struct TransmittersView: View {
             }
             .sheet(isPresented: $showPairing) {
                 NavigationView {
-                    PairingView(store: store)
+                    PairingView()
+                        .environmentObject(store)
                 }
             }
 
