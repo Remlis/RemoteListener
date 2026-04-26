@@ -156,16 +156,16 @@ impl TrayApp {
 
     fn update_menu(&mut self) {
         if let Some(item) = &self.status_item {
-            item.set_text(&format!("Status: {} running", self.status.device_name));
+            item.set_text(format!("Status: {} running", self.status.device_name));
         }
         if let Some(item) = &self.channel_item {
-            item.set_text(&format!(
+            item.set_text(format!(
                 "Channels: {}/{} recording",
                 self.status.recording_channels, self.status.channel_count
             ));
         }
         if let Some(item) = &self.receiver_item {
-            item.set_text(&format!(
+            item.set_text(format!(
                 "Receivers: {} connected",
                 self.status.connected_receivers
             ));
