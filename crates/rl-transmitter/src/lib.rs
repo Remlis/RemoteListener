@@ -4,6 +4,7 @@
 //! and serves them to paired receivers over TLS.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use rl_audio::encoder::Bitrate;
 use rl_audio::engine::AudioEngine;
@@ -22,17 +23,29 @@ pub struct Transmitter {
     config: Config,
     device_id: DeviceId,
     keypair: KeyPair,
+    certified_key: rcgen::CertifiedKey<rcgen::KeyPair>,
     engine: AudioEngine,
     #[allow(dead_code)]
     connection: Option<Connection>,
+}
+
+/// Components needed to run the TLS server, produced by consuming a [`Transmitter`].
+pub struct ServerComponents {
+    pub state: Arc<server::TransmitterState>,
+    pub tls_acceptor: tokio_rustls::TlsAcceptor,
+    pub device_id: String,
+    pub listen_port: u16,
+    pub config: Config,
 }
 
 impl Transmitter {
     /// Create a new transmitter instance.
     pub fn new(config: Config) -> Result<Self, Box<dyn std::error::Error>> {
         // Load or generate Device ID + certificate
+        let cert_path = config.effective_cert_path();
         let device_id_path = config.keypair_path.with_extension("device_id");
-        let (device_id, _cert) = Self::load_or_generate_device_id(&device_id_path)?;
+        let (device_id, certified_key) =
+            Self::load_or_generate_device_id(&device_id_path, &cert_path)?;
 
         // Load or generate X25519 keypair
         let keypair = Self::load_or_generate_keypair(&config.keypair_path)?;
@@ -41,8 +54,36 @@ impl Transmitter {
             config,
             device_id,
             keypair,
+            certified_key,
             engine: AudioEngine::new(),
             connection: None,
+        })
+    }
+
+    /// Consume self and produce the components needed to run the TLS server.
+    pub fn into_server_components(self) -> Result<ServerComponents, rl_net::tls::TlsError> {
+        let key_der = self.certified_key.signing_key.serialize_der();
+        let server_config = rl_net::tls::build_server_config(
+            rustls::pki_types::PrivateKeyDer::from(rustls::pki_types::PrivatePkcs8KeyDer::from(
+                key_der,
+            )),
+            self.certified_key.cert.der().to_vec(),
+        )?;
+        let tls_acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
+
+        let state = Arc::new(server::TransmitterState::new(
+            Arc::new(tokio::sync::Mutex::new(self.engine)),
+            self.config.device_name.clone(),
+            self.keypair,
+            self.config.recording_dir.clone(),
+        ));
+
+        Ok(ServerComponents {
+            state,
+            tls_acceptor,
+            device_id: self.device_id.display().to_string(),
+            listen_port: self.config.listen_port,
+            config: self.config,
         })
     }
 
@@ -59,6 +100,11 @@ impl Transmitter {
     /// Get the public key fingerprint.
     pub fn public_key_fingerprint(&self) -> [u8; 32] {
         self.keypair.fingerprint()
+    }
+
+    /// Get the TLS certified key (cert + signing key).
+    pub fn certified_key(&self) -> &rcgen::CertifiedKey<rcgen::KeyPair> {
+        &self.certified_key
     }
 
     /// Add a test sine wave channel.
@@ -104,24 +150,57 @@ impl Transmitter {
     }
 
     fn load_or_generate_device_id(
-        path: &Path,
+        device_id_path: &Path,
+        cert_path: &Path,
     ) -> Result<(DeviceId, rcgen::CertifiedKey<rcgen::KeyPair>), Box<dyn std::error::Error>> {
-        if path.exists() {
-            let text = std::fs::read_to_string(path)?;
-            if let Ok(id) = text.trim().parse::<DeviceId>() {
-                // Device ID exists but we don't have the cert — that's OK for display
-                // Generate a new cert for TLS but keep the same ID display string
-                let (_new_id, cert) = DeviceId::generate()?;
-                // Return the persisted ID (but we lose the original cert — acceptable for now)
-                return Ok((id, cert));
+        let key_path = cert_path.with_extension("key");
+
+        // Try to load existing key from disk
+        if key_path.exists() && cert_path.exists() {
+            let key_pem = std::fs::read_to_string(&key_path).ok();
+            let cert_der = std::fs::read(cert_path).ok();
+
+            if let (Some(key_pem), Some(cert_der)) = (key_pem, cert_der) {
+                if let Ok(key_pair) = rcgen::KeyPair::from_pem(&key_pem) {
+                    let id = DeviceId::from_cert_der(&cert_der);
+
+                    // Reconstruct CertifiedKey — we can't parse cert params in
+                    // rcgen 0.14, so create a fresh self-signed cert with the
+                    // same key pair. The Device ID stays stable because it's
+                    // derived from the *original* cert DER we persist.
+                    let params = rcgen::CertificateParams::new(vec!["rl-device".to_string()])?;
+                    let cert = params.self_signed(&key_pair)?;
+                    let certified = rcgen::CertifiedKey {
+                        cert,
+                        signing_key: key_pair,
+                    };
+
+                    tracing::debug!("Loaded existing certificate from {:?}", cert_path);
+                    return Ok((id, certified));
+                }
             }
+            // If loading fails, fall through to generate new
+            tracing::warn!(
+                "Failed to load cert from {:?}, generating new one",
+                cert_path
+            );
         }
-        let (id, cert) = DeviceId::generate()?;
-        if let Some(parent) = path.parent() {
+
+        // Generate new
+        let (id, certified) = DeviceId::generate()?;
+        if let Some(parent) = device_id_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, id.display())?;
-        Ok((id, cert))
+
+        // Persist device ID string
+        std::fs::write(device_id_path, id.display())?;
+
+        // Persist cert DER (for stable Device ID) and key PEM
+        std::fs::write(cert_path, certified.cert.der())?;
+        std::fs::write(&key_path, certified.signing_key.serialize_pem())?;
+
+        tracing::info!("Generated new certificate, saved to {:?}", cert_path);
+        Ok((id, certified))
     }
 
     fn load_or_generate_keypair(path: &Path) -> Result<KeyPair, Box<dyn std::error::Error>> {
@@ -159,6 +238,7 @@ impl Transmitter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn transmitter_starts() {
@@ -169,6 +249,7 @@ mod tests {
             auto_delete_days: 0,
             default_bitrate: 16,
             keypair_path: std::env::temp_dir().join("rl-test-tx-keypair.bin"),
+            cert_path: PathBuf::new(),
             enable_upnp: false,
             discovery_server_url: String::new(),
             relay_url: String::new(),
@@ -187,6 +268,7 @@ mod tests {
             auto_delete_days: 0,
             default_bitrate: 16,
             keypair_path: std::env::temp_dir().join("rl-test-tx2-keypair.bin"),
+            cert_path: PathBuf::new(),
             enable_upnp: false,
             discovery_server_url: String::new(),
             relay_url: String::new(),
@@ -208,6 +290,7 @@ mod tests {
             auto_delete_days: 0,
             default_bitrate: 16,
             keypair_path: std::env::temp_dir().join("rl-test-tx3-keypair.bin"),
+            cert_path: PathBuf::new(),
             enable_upnp: false,
             discovery_server_url: String::new(),
             relay_url: String::new(),

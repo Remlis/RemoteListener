@@ -3,6 +3,7 @@
 use rl_core::config::Config;
 use rl_discovery::{Announcement, DiscoveryClient};
 use rl_transmitter::discovery::DiscoveryService;
+use rl_transmitter::server::run_server;
 use rl_transmitter::upnp;
 use rl_transmitter::Transmitter;
 
@@ -30,16 +31,19 @@ async fn main() {
         std::process::exit(1);
     });
 
-    println!("Device ID: {}", tx.device_id_display());
-    println!("Listening on port {}", tx.listen_port());
+    // Save display values before consuming tx
+    let device_id_str = tx.device_id_display().to_string();
+    let listen_port = tx.listen_port();
+    println!("Device ID: {}", device_id_str);
+    println!("Listening on port {}", listen_port);
     println!(
         "Public key fingerprint: {:02x?}",
         tx.public_key_fingerprint()
     );
 
     // Start mDNS service advertisement
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], tx.listen_port()));
-    let discovery = DiscoveryService::new(&tx.config().device_name, tx.device_id_display(), addr)
+    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], listen_port));
+    let discovery = DiscoveryService::new(&tx.config().device_name, &device_id_str, addr)
         .unwrap_or_else(|e| {
             eprintln!("Failed to start mDNS discovery: {}", e);
             std::process::exit(1);
@@ -52,7 +56,7 @@ async fn main() {
 
     // Attempt UPnP port mapping for WAN access
     let port_mapping = if tx.config().enable_upnp {
-        upnp::add_port_mapping(tx.listen_port()).await
+        upnp::add_port_mapping(listen_port).await
     } else {
         None
     };
@@ -66,12 +70,13 @@ async fn main() {
         )
     } else {
         println!("UPnP: not available (LAN-only mode)");
-        (String::new(), tx.listen_port())
+        (String::new(), listen_port)
     };
 
     // Announce to global discovery server
-    let discovery_client = if !tx.config().discovery_server_url.is_empty() {
-        Some(DiscoveryClient::new(&tx.config().discovery_server_url))
+    let discovery_server_url = tx.config().discovery_server_url.clone();
+    let discovery_client = if !discovery_server_url.is_empty() {
+        Some(DiscoveryClient::new(&discovery_server_url))
     } else {
         None
     };
@@ -84,27 +89,29 @@ async fn main() {
             external_addr.clone()
         };
 
-        let announcement = Announcement::new(
-            tx.device_id_display().to_string(),
-            tx.config().device_name.clone(),
-            address,
-            external_port,
-        );
+        let device_name = tx.config().device_name.clone();
+        let announcement =
+            Announcement::new(device_id_str.clone(), device_name, address, external_port);
 
         match client.announce(&announcement).await {
-            Ok(()) => println!(
-                "Discovery: announced to {}",
-                tx.config().discovery_server_url
-            ),
+            Ok(()) => println!("Discovery: announced to {}", discovery_server_url),
             Err(e) => tracing::warn!("Discovery: announce failed: {}", e),
         }
     }
 
+    // Save remaining config values before consuming tx
+    let auto_delete_days = tx.config().auto_delete_days;
+    let recording_dir = tx.config().recording_dir.clone();
+
+    // Consume tx to build TLS server components
+    let components = tx.into_server_components().unwrap_or_else(|e| {
+        eprintln!("Failed to build TLS server config: {}", e);
+        std::process::exit(1);
+    });
+
     println!("Transmitter running. Press Ctrl+C to stop.");
 
     // Start auto-delete background task
-    let auto_delete_days = tx.config().auto_delete_days;
-    let recording_dir = tx.config().recording_dir.clone();
     if auto_delete_days > 0 {
         println!(
             "Auto-delete: recordings older than {} days will be removed",
@@ -118,12 +125,21 @@ async fn main() {
         ));
     }
 
+    // Start the TLS server
+    let server_addr = std::net::SocketAddr::from(([0, 0, 0, 0], components.listen_port));
+    tokio::spawn(run_server(
+        server_addr,
+        components.state,
+        components.device_id,
+        components.tls_acceptor,
+    ));
+
     tokio::signal::ctrl_c().await.unwrap();
     println!("Shutting down.");
 
     // Unannounce from global discovery server
     if let Some(client) = discovery_client {
-        if let Err(e) = client.unannounce(tx.device_id_display()).await {
+        if let Err(e) = client.unannounce(&device_id_str).await {
             tracing::warn!("Discovery: unannounce failed: {}", e);
         }
     }

@@ -24,6 +24,11 @@ pub struct Config {
     /// Path to the persistent keypair file.
     pub keypair_path: PathBuf,
 
+    /// Path to the TLS certificate file (DER format).
+    /// If empty, defaults to keypair_path with .cert extension.
+    #[serde(default)]
+    pub cert_path: PathBuf,
+
     /// Enable UPnP port mapping for WAN access.
     #[serde(default = "default_true")]
     pub enable_upnp: bool,
@@ -61,6 +66,7 @@ impl Default for Config {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join("remotelistener")
                 .join("keypair.bin"),
+            cert_path: PathBuf::new(), // empty = auto-derive from keypair_path
             enable_upnp: true,
             discovery_server_url: String::new(),
             relay_url: String::new(),
@@ -93,6 +99,15 @@ impl Config {
                 );
                 self.default_bitrate = 16;
             }
+        }
+    }
+
+    /// Get the cert path, falling back to keypair_path with .cert extension.
+    pub fn effective_cert_path(&self) -> PathBuf {
+        if self.cert_path.as_os_str().is_empty() {
+            self.keypair_path.with_extension("cert")
+        } else {
+            self.cert_path.clone()
         }
     }
 
@@ -133,6 +148,7 @@ mod tests {
             auto_delete_days: 30,
             default_bitrate: 32,
             keypair_path: PathBuf::from("/tmp/rl-test/keypair.bin"),
+            cert_path: PathBuf::new(),
             enable_upnp: true,
             discovery_server_url: String::new(),
             relay_url: String::new(),

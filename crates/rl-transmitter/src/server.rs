@@ -1,4 +1,4 @@
-//! TCP server for handling receiver connections with live audio streaming.
+//! TLS server for handling receiver connections with live audio streaming.
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, Mutex};
+use tokio_rustls::TlsAcceptor;
 
 use rl_audio::capture::AudioChunk;
 use rl_audio::encoder::Bitrate;
@@ -15,6 +16,13 @@ use rl_core::proto::*;
 use rl_crypto::key::KeyPair;
 use rl_net::connection::{Connection, ConnectionEvent};
 use rl_net::frame;
+use rl_net::tls;
+
+/// Type alias for the TLS stream used by server connections.
+type TlsServerStream = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
+
+/// Type alias for the writer half of a TLS connection.
+type TlsWriter = tokio::io::WriteHalf<TlsServerStream>;
 
 /// Unique ID for a connected receiver.
 type ConnectionId = u64;
@@ -215,14 +223,15 @@ impl TransmitterState {
 /// Maximum read buffer size (10 MB).
 const MAX_READ_BUF: usize = 10 * 1024 * 1024;
 
-/// Run the transmitter's TCP server.
+/// Run the transmitter's TLS server.
 pub async fn run_server(
     addr: SocketAddr,
     state: Arc<TransmitterState>,
     device_id: String,
-) -> Result<(), Box<dyn std::error::Error>> {
+    tls_acceptor: TlsAcceptor,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(addr).await?;
-    tracing::info!("Listening on {}", addr);
+    tracing::info!("Listening on {} (TLS)", addr);
 
     loop {
         let (stream, remote_addr) = listener.accept().await?;
@@ -236,27 +245,44 @@ pub async fn run_server(
             continue;
         }
 
-        tracing::info!("Connection from {}", remote_addr);
-
+        let acceptor = tls_acceptor.clone();
         let state = state.clone();
         let device_id = device_id.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, device_id, state).await {
-                tracing::error!("Connection error: {}", e);
+            match acceptor.accept(stream).await {
+                Ok(tls_stream) => {
+                    tracing::info!("TLS handshake completed with {}", remote_addr);
+
+                    // Extract peer Device ID from client cert if presented
+                    let peer_id = tls::peer_device_id(&tls_stream);
+                    if let Some(ref fp) = peer_id {
+                        tracing::info!("Peer Device ID: {:02x?}...", &fp[..8.min(fp.len())]);
+                    } else {
+                        tracing::info!("No client certificate presented");
+                    }
+
+                    if let Err(e) = handle_connection(tls_stream, device_id, state, peer_id).await {
+                        tracing::error!("Connection error: {}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("TLS handshake failed with {}: {}", remote_addr, e);
+                }
             }
         });
     }
 }
 
 async fn handle_connection(
-    stream: tokio::net::TcpStream,
+    stream: TlsServerStream,
     device_id: String,
     state: Arc<TransmitterState>,
+    peer_device_id: Option<[u8; 32]>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut conn = Connection::new(device_id);
-    conn.on_tls_established()?; // For now, skip actual TLS
+    conn.on_tls_established()?;
 
-    let (reader, writer) = stream.into_split();
+    let (reader, writer) = tokio::io::split(stream);
     let mut reader = tokio::io::BufReader::new(reader);
     let writer = Arc::new(Mutex::new(writer));
 
@@ -264,10 +290,19 @@ async fn handle_connection(
     let hello_frame = conn.create_hello("0.1.0");
     writer.lock().await.write_all(&hello_frame).await?;
 
-    // Register this connection
+    // Register this connection with peer Device ID if available
     let conn_id = {
         let mut mgr = state.connections.lock().await;
-        mgr.add_connection("unknown".to_string())
+        let peer_name = peer_device_id
+            .as_ref()
+            .map(|fp| format!("{:02x?}...", &fp[..8.min(fp.len())]))
+            .unwrap_or_else(|| "unknown".to_string());
+        let id = mgr.add_connection(peer_name);
+        // Store peer Device ID fingerprint if presented
+        if let Some(fp) = peer_device_id {
+            mgr.set_paired(id, fp.to_vec());
+        }
+        id
     };
 
     let mut read_buf = Vec::new();
@@ -333,7 +368,7 @@ async fn handle_event(
     event: &ConnectionEvent,
     state: &Arc<TransmitterState>,
     conn_id: ConnectionId,
-    writer: &Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    writer: &Arc<Mutex<TlsWriter>>,
 ) -> Vec<Vec<u8>> {
     let mut responses = Vec::new();
 
@@ -582,7 +617,7 @@ fn spawn_capture_task(
 fn spawn_stream_task(
     channel_id: String,
     mut rx: broadcast::Receiver<Vec<u8>>,
-    writer: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    writer: Arc<Mutex<TlsWriter>>,
     state: Arc<TransmitterState>,
 ) {
     tokio::spawn(async move {
