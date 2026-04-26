@@ -132,6 +132,8 @@ pub struct TransmitterState {
     pub engine: Arc<Mutex<AudioEngine>>,
     pub device_name: String,
     pub keypair: KeyPair,
+    /// Directory for encrypted recording files.
+    pub recording_dir: std::path::PathBuf,
     /// Broadcast senders for live audio per channel.
     audio_senders: Mutex<HashMap<String, broadcast::Sender<Vec<u8>>>>,
     /// Connection manager for tracking receivers.
@@ -141,11 +143,12 @@ pub struct TransmitterState {
 }
 
 impl TransmitterState {
-    pub fn new(engine: Arc<Mutex<AudioEngine>>, device_name: String, keypair: KeyPair) -> Self {
+    pub fn new(engine: Arc<Mutex<AudioEngine>>, device_name: String, keypair: KeyPair, recording_dir: std::path::PathBuf) -> Self {
         Self {
             engine,
             device_name,
             keypair,
+            recording_dir,
             audio_senders: Mutex::new(HashMap::new()),
             connections: Mutex::new(ConnectionManager::new()),
             max_connections: 32,
@@ -455,14 +458,18 @@ async fn handle_event(
         ConnectionEvent::Closed { reason } => {
             tracing::info!("Connection {} closed: {}", conn_id, reason);
         }
-        ConnectionEvent::RecordingListRequested { .. } => {
-            responses.push(Connection::create_recording_list_response(vec![]));
+        ConnectionEvent::RecordingListRequested { channel_id } => {
+            let recordings = enumerate_recordings(&state.recording_dir, &channel_id);
+            responses.push(Connection::create_recording_list_response(recordings));
         }
         ConnectionEvent::RecordingFetchRequested { recording_id } => {
-            responses.push(Connection::create_recording_fetch_error(
-                recording_id,
-                "Not implemented",
-            ));
+            match fetch_recording(&state.recording_dir, &recording_id).await {
+                Ok(chunks) => responses.extend(chunks),
+                Err(e) => responses.push(Connection::create_recording_fetch_error(
+                    &recording_id,
+                    &e.to_string(),
+                )),
+            }
         }
         ConnectionEvent::DeviceStatusRequested => {
             let engine = state.engine.lock().await;
@@ -634,4 +641,83 @@ fn handle_control_command(engine: &mut AudioEngine, cmd: &ControlCommand) -> Vec
         }
         _ => Connection::create_control_response(false, "Unsupported command"),
     }
+}
+
+/// Enumerate .rlrec files in the recording directory, optionally filtered by channel_id.
+fn enumerate_recordings(recording_dir: &std::path::Path, channel_id: &str) -> Vec<RecordingInfo> {
+    let Ok(entries) = std::fs::read_dir(recording_dir) else {
+        return vec![];
+    };
+
+    let mut recordings = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rlrec") {
+            continue;
+        }
+
+        // Filename format: {channel_id}_{timestamp}.rlrec
+        let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let (file_channel_id, _) = filename
+            .rsplit_once('_')
+            .unwrap_or((filename, ""));
+
+        if !channel_id.is_empty() && file_channel_id != channel_id {
+            continue;
+        }
+
+        let metadata = match std::fs::metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        let recording_id = filename.to_string();
+        let file_size = metadata.len();
+
+        recordings.push(RecordingInfo {
+            recording_id,
+            channel_id: file_channel_id.to_string(),
+            start_timestamp: 0,
+            end_timestamp: 0,
+            file_size,
+            duration_seconds: 0,
+        });
+    }
+
+    recordings
+}
+
+/// Fetch a recording file and return a sequence of RecordingChunk frames followed by a FetchComplete.
+async fn fetch_recording(
+    recording_dir: &std::path::Path,
+    recording_id: &str,
+) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>> {
+    let path = recording_dir.join(format!("{}.rlrec", recording_id));
+    if !path.exists() {
+        return Err(format!("Recording not found: {}", recording_id).into());
+    }
+
+    let data = tokio::fs::read(&path).await?;
+    let mut frames = Vec::new();
+    let chunk_size = 32768; // 32KB chunks
+
+    for (i, chunk) in data.chunks(chunk_size).enumerate() {
+        let chunk_msg = RecordingChunk {
+            recording_id: recording_id.to_string(),
+            data: chunk.to_vec(),
+            chunk_index: i as u32,
+            is_last: i == (data.len() + chunk_size - 1) / chunk_size - 1,
+        };
+        frames.push(frame::encode_message(MessageType::RecordingChunk, &chunk_msg));
+    }
+
+    let complete_msg = RecordingFetchComplete {
+        recording_id: recording_id.to_string(),
+    };
+    frames.push(frame::encode_message(
+        MessageType::RecordingFetchComplete,
+        &complete_msg,
+    ));
+
+    Ok(frames)
 }

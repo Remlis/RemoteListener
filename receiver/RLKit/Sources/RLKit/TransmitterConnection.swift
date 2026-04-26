@@ -51,6 +51,18 @@ public struct LiveAudioChunkData {
     }
 }
 
+/// Result of a control command.
+public struct ControlResponseResult: Identifiable {
+    public let id = UUID()
+    public let success: Bool
+    public let message: String
+
+    public init(success: Bool, message: String) {
+        self.success = success
+        self.message = message
+    }
+}
+
 /// Manages a single connection to a transmitter.
 public class TransmitterConnection: ObservableObject, Identifiable {
     /// Unique identifier for this connection (host:port).
@@ -67,6 +79,9 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     @Published public private(set) var remoteDeviceName: String?
     @Published public private(set) var channels: [ChannelInfo] = []
     @Published public private(set) var isPaired: Bool = false
+
+    /// Last control response received from the transmitter.
+    @Published public private(set) var lastControlResponse: ControlResponseResult?
 
     /// Live audio chunks received from the transmitter.
     public let audioChunkSubject = PassthroughSubject<LiveAudioChunkData, Never>()
@@ -198,6 +213,55 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         sendFrame(messageType: .ping, body: body)
     }
 
+    /// Set recording enabled/disabled for a channel.
+    public func setChannelRecording(channelID: String, enabled: Bool) {
+        var body = Data()
+        // ControlCommand { control_type = 1 (SET_CHANNEL_RECORDING), channel_id, payload.recording_enabled }
+        body.appendProtoUInt32(field: 1, value: 1) // SET_CHANNEL_RECORDING
+        body.appendProtoString(field: 2, value: channelID)
+        // payload: oneof { recording_enabled = 1 }
+        var payload = Data()
+        payload.appendProtoBool(field: 1, value: enabled)
+        body.appendProtoBytes(field: 3, value: payload)
+        sendFrame(messageType: .controlCommand, body: body)
+    }
+
+    /// Set bitrate for a channel.
+    public func setChannelBitrate(channelID: String, bitrate: UInt32) {
+        var body = Data()
+        // ControlCommand { control_type = 2 (SET_CHANNEL_BITRATE), channel_id, payload.bitrate }
+        body.appendProtoUInt32(field: 1, value: 2) // SET_CHANNEL_BITRATE
+        body.appendProtoString(field: 2, value: channelID)
+        // payload: oneof { bitrate = 2 }
+        var payload = Data()
+        payload.appendProtoUInt32(field: 2, value: bitrate)
+        body.appendProtoBytes(field: 3, value: payload)
+        sendFrame(messageType: .controlCommand, body: body)
+    }
+
+    /// Request the recording list for a channel.
+    public func requestRecordingList(channelID: String) {
+        var body = Data()
+        body.appendProtoString(field: 1, value: channelID)
+        sendFrame(messageType: .recordingListRequest, body: body)
+    }
+
+    /// Request to fetch a recording.
+    public func fetchRecording(recordingID: String) {
+        var body = Data()
+        body.appendProtoString(field: 1, value: recordingID)
+        sendFrame(messageType: .recordingFetchRequest, body: body)
+    }
+
+    /// Delete a recording.
+    public func deleteRecording(recordingID: String) {
+        var body = Data()
+        // ControlCommand { control_type = 3 (DELETE_RECORDING), channel_id = recordingID }
+        body.appendProtoUInt32(field: 1, value: 3) // DELETE_RECORDING
+        body.appendProtoString(field: 2, value: recordingID)
+        sendFrame(messageType: .controlCommand, body: body)
+    }
+
     private func sendClose(reason: String) {
         var body = Data()
         body.appendProtoString(field: 1, value: reason)
@@ -283,7 +347,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         case .deviceStatus:
             handleDeviceStatus(frame.body)
         case .controlResponse:
-            break // TODO
+            handleControlResponse(frame.body)
         case .recordingListResponse, .recordingChunk, .recordingFetchComplete, .recordingFetchError:
             break // TODO: recording handling
         case .unknown:
@@ -477,6 +541,15 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         DispatchQueue.main.async {
             if let name = deviceName { self.remoteDeviceName = name }
             if !channels.isEmpty { self.channels = channels }
+        }
+    }
+
+    private func handleControlResponse(_ data: Data) {
+        // ControlResponse { success = 1, message = 2 }
+        let success = data.parseProtoBool(field: 1)
+        let message = data.parseProtoString(field: 2) ?? ""
+        DispatchQueue.main.async {
+            self.lastControlResponse = ControlResponseResult(success: success, message: message)
         }
     }
 
