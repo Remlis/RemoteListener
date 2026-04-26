@@ -9,6 +9,7 @@ rl-audio = { path = "../rl-audio" }
 rl-crypto = { path = "../rl-crypto" }
 rl-net = { path = "../rl-net" }
 rl-tray = { path = "../rl-tray" }
+rl-discovery = { path = "../rl-discovery" }
 mdns-sd = { workspace = true }
 igd-next = { workspace = true }
 tokio = { workspace = true }

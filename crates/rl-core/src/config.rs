@@ -27,6 +27,11 @@ pub struct Config {
     /// Enable UPnP port mapping for WAN access.
     #[serde(default = "default_true")]
     pub enable_upnp: bool,
+
+    /// URL of the global discovery server (e.g. "https://discovery.example.com").
+    /// If empty, global discovery is disabled.
+    #[serde(default)]
+    pub discovery_server_url: String,
 }
 
 fn default_true() -> bool {
@@ -52,6 +57,7 @@ impl Default for Config {
                 .join("remotelistener")
                 .join("keypair.bin"),
             enable_upnp: true,
+            discovery_server_url: String::new(),
         }
     }
 }
@@ -122,6 +128,7 @@ mod tests {
             default_bitrate: 32,
             keypair_path: PathBuf::from("/tmp/rl-test/keypair.bin"),
             enable_upnp: true,
+            discovery_server_url: String::new(),
         };
 
         config.save(&path).unwrap();

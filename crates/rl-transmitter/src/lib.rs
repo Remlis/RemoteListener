@@ -170,6 +170,7 @@ mod tests {
             default_bitrate: 16,
             keypair_path: std::env::temp_dir().join("rl-test-tx-keypair.bin"),
             enable_upnp: false,
+            discovery_server_url: String::new(),
         };
         let tx = Transmitter::new(config).unwrap();
         assert!(!tx.device_id_display().is_empty());
@@ -186,6 +187,7 @@ mod tests {
             default_bitrate: 16,
             keypair_path: std::env::temp_dir().join("rl-test-tx2-keypair.bin"),
             enable_upnp: false,
+            discovery_server_url: String::new(),
         };
         let mut tx = Transmitter::new(config).unwrap();
         tx.add_test_channel("ch-001".into(), 440.0, Bitrate::Kbps16)
@@ -205,6 +207,7 @@ mod tests {
             default_bitrate: 16,
             keypair_path: std::env::temp_dir().join("rl-test-tx3-keypair.bin"),
             enable_upnp: false,
+            discovery_server_url: String::new(),
         };
         let mut tx = Transmitter::new(config).unwrap();
         tx.add_test_channel("ch-001".into(), 440.0, Bitrate::Kbps16)

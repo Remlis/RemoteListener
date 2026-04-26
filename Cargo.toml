@@ -8,6 +8,7 @@ members = [
     "crates/rl-net",
     "crates/rl-tray",
     "crates/rl-testtool",
+    "crates/rl-discovery",
 ]
 
 [workspace.package]
