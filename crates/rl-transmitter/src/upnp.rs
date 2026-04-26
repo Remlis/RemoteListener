@@ -36,10 +36,7 @@ pub async fn add_port_mapping(internal_port: u16) -> Option<PortMapping> {
     let external_ip = gateway.get_external_ip().await.ok()?;
 
     // Add port mapping: external port -> internal port
-    let local_addr = SocketAddr::new(
-        "0.0.0.0".parse().unwrap(),
-        internal_port,
-    );
+    let local_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), internal_port);
 
     let result = gateway
         .add_port(
@@ -69,7 +66,9 @@ pub async fn add_port_mapping(internal_port: u16) -> Option<PortMapping> {
 }
 
 /// Remove a previously created UPnP port mapping.
-pub async fn remove_port_mapping(external_port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn remove_port_mapping(
+    external_port: u16,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let options = SearchOptions {
         timeout: Some(std::time::Duration::from_secs(3)),
         ..Default::default()
@@ -80,7 +79,10 @@ pub async fn remove_port_mapping(external_port: u16) -> Result<(), Box<dyn std::
         .remove_port(PortMappingProtocol::TCP, external_port)
         .await?;
 
-    tracing::info!("UPnP: removed port mapping for external port {}", external_port);
+    tracing::info!(
+        "UPnP: removed port mapping for external port {}",
+        external_port
+    );
     Ok(())
 }
 

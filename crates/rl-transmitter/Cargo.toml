@@ -22,6 +22,8 @@ aes-gcm = { workspace = true }
 x25519-dalek = { workspace = true }
 rand = { workspace = true }
 rcgen = { workspace = true }
+reqwest = { workspace = true }
+thiserror = { workspace = true }
 
 [lib]
 name = "rl_transmitter"

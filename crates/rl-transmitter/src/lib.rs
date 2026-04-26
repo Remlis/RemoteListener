@@ -12,9 +12,10 @@ use rl_core::device_id::DeviceId;
 use rl_crypto::key::KeyPair;
 use rl_net::connection::Connection;
 
+pub mod discovery;
+pub mod relay;
 #[allow(dead_code)]
 mod server;
-pub mod discovery;
 pub mod upnp;
 
 /// The transmitter application.
@@ -171,6 +172,7 @@ mod tests {
             keypair_path: std::env::temp_dir().join("rl-test-tx-keypair.bin"),
             enable_upnp: false,
             discovery_server_url: String::new(),
+            relay_url: String::new(),
         };
         let tx = Transmitter::new(config).unwrap();
         assert!(!tx.device_id_display().is_empty());
@@ -188,6 +190,7 @@ mod tests {
             keypair_path: std::env::temp_dir().join("rl-test-tx2-keypair.bin"),
             enable_upnp: false,
             discovery_server_url: String::new(),
+            relay_url: String::new(),
         };
         let mut tx = Transmitter::new(config).unwrap();
         tx.add_test_channel("ch-001".into(), 440.0, Bitrate::Kbps16)
@@ -208,6 +211,7 @@ mod tests {
             keypair_path: std::env::temp_dir().join("rl-test-tx3-keypair.bin"),
             enable_upnp: false,
             discovery_server_url: String::new(),
+            relay_url: String::new(),
         };
         let mut tx = Transmitter::new(config).unwrap();
         tx.add_test_channel("ch-001".into(), 440.0, Bitrate::Kbps16)

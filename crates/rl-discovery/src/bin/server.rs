@@ -141,13 +141,17 @@ async fn handle_connection(
 
     match (method.as_str(), path.as_str()) {
         ("POST", "/announce") => {
-            let ann: serde_json::Result<rl_discovery::Announcement> =
-                serde_json::from_slice(&body);
+            let ann: serde_json::Result<rl_discovery::Announcement> = serde_json::from_slice(&body);
             match ann {
                 Ok(ann) => {
                     let mut s = state.lock().await;
                     s.store.announce(ann.clone());
-                    tracing::info!("Announced: {} at {}:{}", ann.device_id, ann.address, ann.port);
+                    tracing::info!(
+                        "Announced: {} at {}:{}",
+                        ann.device_id,
+                        ann.address,
+                        ann.port
+                    );
                     send_response(&mut stream, 200, "OK").await?;
                 }
                 Err(e) => {
@@ -213,7 +217,11 @@ async fn send_json_response(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let response = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}\r\n{}",
-        status, message, json.len(), cors, json
+        status,
+        message,
+        json.len(),
+        cors,
+        json
     );
     stream.write_all(response.as_bytes()).await?;
     Ok(())
@@ -228,7 +236,10 @@ async fn send_raw_response(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let response = format!(
         "HTTP/1.1 {} {}\r\nContent-Length: {}\r\n{}\r\n",
-        status, message, body.len(), cors
+        status,
+        message,
+        body.len(),
+        cors
     );
     stream.write_all(response.as_bytes()).await?;
     stream.write_all(body).await?;

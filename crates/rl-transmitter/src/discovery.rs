@@ -78,7 +78,8 @@ impl DiscoveryService {
 
     /// Stop advertising and shut down the mDNS daemon.
     pub fn stop(self) -> Result<(), Box<dyn std::error::Error>> {
-        self.daemon.unregister(&format!("{}.{}.local.", self.service_name, SERVICE_TYPE))?;
+        self.daemon
+            .unregister(&format!("{}.{}.local.", self.service_name, SERVICE_TYPE))?;
         tracing::info!("mDNS: unregistered service");
         Ok(())
     }
@@ -101,10 +102,7 @@ mod tests {
 
     #[test]
     fn discovery_service_starts_and_stops() {
-        let addr = SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::new(192, 168, 1, 100),
-            22000,
-        ));
+        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(192, 168, 1, 100), 22000));
         let svc = DiscoveryService::new("TestDevice", "ABCD-EFGH", addr).unwrap();
         assert_eq!(svc.service_name(), "TestDevice");
         svc.stop().unwrap();

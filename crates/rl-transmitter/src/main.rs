@@ -1,10 +1,10 @@
 //! rl-transmitter: remote audio monitoring daemon.
 
 use rl_core::config::Config;
-use rl_transmitter::Transmitter;
+use rl_discovery::{Announcement, DiscoveryClient};
 use rl_transmitter::discovery::DiscoveryService;
 use rl_transmitter::upnp;
-use rl_discovery::{Announcement, DiscoveryClient};
+use rl_transmitter::Transmitter;
 
 #[tokio::main]
 async fn main() {
@@ -39,16 +39,16 @@ async fn main() {
 
     // Start mDNS service advertisement
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], tx.listen_port()));
-    let discovery = DiscoveryService::new(
-        &tx.config().device_name,
-        tx.device_id_display(),
-        addr,
-    )
-    .unwrap_or_else(|e| {
-        eprintln!("Failed to start mDNS discovery: {}", e);
-        std::process::exit(1);
-    });
-    println!("mDNS: advertising as {}.{}", discovery.service_name(), rl_transmitter::discovery::SERVICE_TYPE_SHORT);
+    let discovery = DiscoveryService::new(&tx.config().device_name, tx.device_id_display(), addr)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to start mDNS discovery: {}", e);
+            std::process::exit(1);
+        });
+    println!(
+        "mDNS: advertising as {}.{}",
+        discovery.service_name(),
+        rl_transmitter::discovery::SERVICE_TYPE_SHORT
+    );
 
     // Attempt UPnP port mapping for WAN access
     let port_mapping = if tx.config().enable_upnp {
@@ -60,7 +60,10 @@ async fn main() {
     // Determine external address for announcement
     let (external_addr, external_port) = if let Some(ref mapping) = port_mapping {
         println!("UPnP: external address {}", mapping.external_addr);
-        (mapping.external_addr.ip().to_string(), mapping.external_addr.port())
+        (
+            mapping.external_addr.ip().to_string(),
+            mapping.external_addr.port(),
+        )
     } else {
         println!("UPnP: not available (LAN-only mode)");
         (String::new(), tx.listen_port())
@@ -89,7 +92,10 @@ async fn main() {
         );
 
         match client.announce(&announcement).await {
-            Ok(()) => println!("Discovery: announced to {}", tx.config().discovery_server_url),
+            Ok(()) => println!(
+                "Discovery: announced to {}",
+                tx.config().discovery_server_url
+            ),
             Err(e) => tracing::warn!("Discovery: announce failed: {}", e),
         }
     }

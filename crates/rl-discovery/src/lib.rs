@@ -97,10 +97,7 @@ impl DiscoveryClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(DiscoveryError::Server(format!(
-                "HTTP {}: {}",
-                status, body
-            )));
+            return Err(DiscoveryError::Server(format!("HTTP {}: {}", status, body)));
         }
 
         Ok(())
@@ -119,16 +116,10 @@ impl DiscoveryClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(DiscoveryError::Server(format!(
-                "HTTP {}: {}",
-                status, body
-            )));
+            return Err(DiscoveryError::Server(format!("HTTP {}: {}", status, body)));
         }
 
-        let lookup_resp: LookupResponse = resp
-            .json()
-            .await
-            .map_err(DiscoveryError::Parse)?;
+        let lookup_resp: LookupResponse = resp.json().await.map_err(DiscoveryError::Parse)?;
 
         Ok(lookup_resp.found)
     }
@@ -146,10 +137,7 @@ impl DiscoveryClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(DiscoveryError::Server(format!(
-                "HTTP {}: {}",
-                status, body
-            )));
+            return Err(DiscoveryError::Server(format!("HTTP {}: {}", status, body)));
         }
 
         Ok(())
