@@ -131,6 +131,9 @@ struct TransmitterDetailView: View {
                 NavigationLink(destination: SettingsView(connection: connection)) {
                     Text("Transmitter Settings")
                 }
+                NavigationLink(destination: KeyTransferView(connection: connection)) {
+                    Text("Key Transfer")
+                }
             }
         }
         .navigationTitle(connection.remoteDeviceName ?? "Transmitter")
