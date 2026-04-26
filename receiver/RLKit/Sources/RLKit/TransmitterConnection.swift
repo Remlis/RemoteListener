@@ -304,6 +304,25 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         sendFrame(messageType: .controlCommand, body: body)
     }
 
+    /// Request storage info from the transmitter.
+    public func getStorageInfo() {
+        var body = Data()
+        // ControlCommand { control_type = 4 (GET_STORAGE_INFO) }
+        body.appendProtoUInt32(field: 1, value: 4) // GET_STORAGE_INFO
+        sendFrame(messageType: .controlCommand, body: body)
+    }
+
+    /// Set auto-delete days on the transmitter.
+    public func setAutoDeleteDays(_ days: UInt32) {
+        var body = Data()
+        // ControlCommand { control_type = 5 (SET_AUTO_DELETE_DAYS), payload.auto_delete_days }
+        body.appendProtoUInt32(field: 1, value: 5) // SET_AUTO_DELETE_DAYS
+        var payload = Data()
+        payload.appendProtoUInt32(field: 5, value: days) // field 13 in proto, but in oneof payload it's field 5
+        body.appendProtoBytes(field: 3, value: payload)
+        sendFrame(messageType: .controlCommand, body: body)
+    }
+
     private func sendClose(reason: String) {
         var body = Data()
         body.appendProtoString(field: 1, value: reason)

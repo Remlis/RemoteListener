@@ -128,6 +128,9 @@ struct TransmitterDetailView: View {
                 Button("Refresh Channels") {
                     connection.requestChannelList()
                 }
+                NavigationLink(destination: SettingsView(connection: connection)) {
+                    Text("Transmitter Settings")
+                }
             }
         }
         .navigationTitle(connection.remoteDeviceName ?? "Transmitter")
