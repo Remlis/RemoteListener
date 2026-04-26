@@ -6,4 +6,6 @@ edition.workspace = true
 [dependencies]
 rl-core = { path = "../rl-core" }
 tray-icon = { workspace = true }
+winit = { workspace = true }
 tracing = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }

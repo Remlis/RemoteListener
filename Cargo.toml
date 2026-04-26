@@ -64,6 +64,7 @@ igd-next = { version = "0.17", features = ["aio_tokio"] }
 
 # System tray
 tray-icon = "0.22"
+winit = "0.30"
 
 # HTTP
 reqwest = { version = "0.12", features = ["json"] }
