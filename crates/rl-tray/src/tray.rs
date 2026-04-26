@@ -112,7 +112,13 @@ impl ApplicationHandler for TrayApp {
         }
     }
 
-    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window_id: WindowId, _event: WindowEvent) {}
+    fn window_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        _event: WindowEvent,
+    ) {
+    }
 }
 
 impl TrayApp {
@@ -206,9 +212,9 @@ fn create_icon() -> tray_icon::Icon {
                 } else {
                     255u8
                 };
-                rgba.push(0);   // R
+                rgba.push(0); // R
                 rgba.push(180); // G
-                rgba.push(0);   // B
+                rgba.push(0); // B
                 rgba.push(alpha); // A
             } else {
                 rgba.push(0);

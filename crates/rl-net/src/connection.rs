@@ -339,7 +339,11 @@ impl Connection {
     }
 
     /// Create a CONTROL_RESPONSE message with StorageInfo payload.
-    pub fn create_control_response_with_storage(success: bool, error: &str, storage: StorageInfo) -> Vec<u8> {
+    pub fn create_control_response_with_storage(
+        success: bool,
+        error: &str,
+        storage: StorageInfo,
+    ) -> Vec<u8> {
         let resp = ControlResponse {
             success,
             error: error.to_string(),

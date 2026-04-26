@@ -2,4 +2,4 @@
 
 pub mod tray;
 
-pub use tray::{TrayAction, TrayCommand, TrayStatus, run_tray};
+pub use tray::{run_tray, TrayAction, TrayCommand, TrayStatus};
