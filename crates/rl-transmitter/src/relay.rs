@@ -59,7 +59,7 @@ fn encode_bytes(data: &[u8]) -> Vec<u8> {
     buf.extend_from_slice(data);
     // Pad to 4-byte boundary
     let pad = (4 - (data.len() % 4)) % 4;
-    buf.extend(std::iter::repeat(0u8).take(pad));
+    buf.extend(std::iter::repeat_n(0u8, pad));
     buf
 }
 
@@ -219,8 +219,8 @@ impl RelayMessage {
             }
             TYPE_SESSION_INVITATION => {
                 let (from, rest) = decode_bytes_with_rest(&payload)?;
-                let (key, rest) = decode_bytes_with_rest(&rest)?;
-                let (address, rest) = decode_bytes_with_rest(&rest)?;
+                let (key, rest) = decode_bytes_with_rest(rest)?;
+                let (address, rest) = decode_bytes_with_rest(rest)?;
                 if rest.len() < 8 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -489,7 +489,7 @@ pub async fn connect_via_relay(
 
     // Wait for SessionInvitation
     let msg = read_message(&mut stream).await?;
-    match msg {
+    let (from, key, address, port) = match msg {
         RelayMessage::SessionInvitation {
             from,
             key,
@@ -498,65 +498,7 @@ pub async fn connect_via_relay(
             server_socket: _,
         } => {
             tracing::info!("Received session invitation from relay");
-
-            // Connect to session port
-            let session_addr = if address.is_empty() || address == vec![0u8, 0, 0, 0] {
-                SocketAddr::new(relay_addr.ip(), port)
-            } else if address.len() == 4 {
-                let ip = std::net::Ipv4Addr::new(address[0], address[1], address[2], address[3]);
-                SocketAddr::new(std::net::IpAddr::V4(ip), port)
-            } else if address.len() == 16 {
-                let octets: [u8; 16] = address.try_into().unwrap_or([0; 16]);
-                let ip = std::net::Ipv6Addr::from(octets);
-                SocketAddr::new(std::net::IpAddr::V6(ip), port)
-            } else {
-                SocketAddr::new(relay_addr.ip(), port)
-            };
-
-            let mut session_stream = TcpStream::connect(session_addr)
-                .await
-                .map_err(RelayError::Io)?;
-
-            // Send JoinSessionRequest
-            let join_session = RelayMessage::JoinSessionRequest { key };
-            session_stream
-                .write_all(&join_session.encode())
-                .await
-                .map_err(RelayError::Io)?;
-
-            // Wait for Response
-            let mut buf = Vec::new();
-            let mut tmp = [0u8; 1024];
-            let n = session_stream
-                .read(&mut tmp)
-                .await
-                .map_err(RelayError::Io)?;
-            buf.extend_from_slice(&tmp[..n]);
-
-            let resp = RelayMessage::decode_from(&mut buf.as_slice())
-                .map_err(|e| RelayError::Protocol(format!("Failed to decode response: {}", e)))?;
-
-            match resp {
-                RelayMessage::Response { code, message } if code == CODE_SUCCESS => {
-                    tracing::info!("Session joined: {}", message);
-                    return Ok(RelaySession {
-                        stream: session_stream,
-                        remote_device_id: from,
-                    });
-                }
-                RelayMessage::Response { code, message } => {
-                    return Err(RelayError::Protocol(format!(
-                        "Session join failed: code={} message={}",
-                        code, message
-                    )));
-                }
-                other => {
-                    return Err(RelayError::Protocol(format!(
-                        "Unexpected session response: {:?}",
-                        other
-                    )));
-                }
-            }
+            (from, key, address, port)
         }
         RelayMessage::Response { code, message } => {
             return Err(RelayError::Protocol(format!(
@@ -573,6 +515,61 @@ pub async fn connect_via_relay(
                 other
             )));
         }
+    };
+
+    // Connect to session port
+    let session_addr = if address.is_empty() || address == vec![0u8, 0, 0, 0] {
+        SocketAddr::new(relay_addr.ip(), port)
+    } else if address.len() == 4 {
+        let ip = std::net::Ipv4Addr::new(address[0], address[1], address[2], address[3]);
+        SocketAddr::new(std::net::IpAddr::V4(ip), port)
+    } else if address.len() == 16 {
+        let octets: [u8; 16] = address.try_into().unwrap_or([0; 16]);
+        let ip = std::net::Ipv6Addr::from(octets);
+        SocketAddr::new(std::net::IpAddr::V6(ip), port)
+    } else {
+        SocketAddr::new(relay_addr.ip(), port)
+    };
+
+    let mut session_stream = TcpStream::connect(session_addr)
+        .await
+        .map_err(RelayError::Io)?;
+
+    // Send JoinSessionRequest
+    let join_session = RelayMessage::JoinSessionRequest { key };
+    session_stream
+        .write_all(&join_session.encode())
+        .await
+        .map_err(RelayError::Io)?;
+
+    // Wait for Response
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 1024];
+    let n = session_stream
+        .read(&mut tmp)
+        .await
+        .map_err(RelayError::Io)?;
+    buf.extend_from_slice(&tmp[..n]);
+
+    let resp = RelayMessage::decode_from(&mut buf.as_slice())
+        .map_err(|e| RelayError::Protocol(format!("Failed to decode response: {}", e)))?;
+
+    match resp {
+        RelayMessage::Response { code, message } if code == CODE_SUCCESS => {
+            tracing::info!("Session joined: {}", message);
+            Ok(RelaySession {
+                stream: session_stream,
+                remote_device_id: from,
+            })
+        }
+        RelayMessage::Response { code, message } => Err(RelayError::Protocol(format!(
+            "Session join failed: code={} message={}",
+            code, message
+        ))),
+        other => Err(RelayError::Protocol(format!(
+            "Unexpected session response: {:?}",
+            other
+        ))),
     }
 }
 

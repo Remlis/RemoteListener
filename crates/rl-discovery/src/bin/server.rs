@@ -135,7 +135,7 @@ async fn handle_connection(
 
     // Handle OPTIONS (CORS preflight)
     if method == "OPTIONS" {
-        send_raw_response(&mut stream, 204, "No Content", &cors, b"").await?;
+        send_raw_response(&mut stream, 204, "No Content", cors, b"").await?;
         return Ok(());
     }
 
@@ -171,7 +171,7 @@ async fn handle_connection(
                 found: found.cloned(),
             };
             let json = serde_json::to_string(&resp).unwrap_or_default();
-            send_json_response(&mut stream, 200, "OK", &cors, &json).await?;
+            send_json_response(&mut stream, 200, "OK", cors, &json).await?;
         }
         ("DELETE", path) if path.starts_with("/unannounce?device_id=") => {
             let device_id = path
