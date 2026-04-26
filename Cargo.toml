@@ -58,6 +58,9 @@ clap = { version = "4", features = ["derive"] }
 # mDNS / DNS-SD
 mdns-sd = "0.19"
 
+# UPnP / NAT-PMP
+igd-next = { version = "0.17", features = ["aio_tokio"] }
+
 # System tray
 tray-icon = "0.22"
 

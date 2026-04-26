@@ -23,6 +23,14 @@ pub struct Config {
 
     /// Path to the persistent keypair file.
     pub keypair_path: PathBuf,
+
+    /// Enable UPnP port mapping for WAN access.
+    #[serde(default = "default_true")]
+    pub enable_upnp: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -43,6 +51,7 @@ impl Default for Config {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join("remotelistener")
                 .join("keypair.bin"),
+            enable_upnp: true,
         }
     }
 }
@@ -112,6 +121,7 @@ mod tests {
             auto_delete_days: 30,
             default_bitrate: 32,
             keypair_path: PathBuf::from("/tmp/rl-test/keypair.bin"),
+            enable_upnp: true,
         };
 
         config.save(&path).unwrap();

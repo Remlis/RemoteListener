@@ -15,6 +15,7 @@ use rl_net::connection::Connection;
 #[allow(dead_code)]
 mod server;
 pub mod discovery;
+pub mod upnp;
 
 /// The transmitter application.
 pub struct Transmitter {
@@ -168,6 +169,7 @@ mod tests {
             auto_delete_days: 0,
             default_bitrate: 16,
             keypair_path: std::env::temp_dir().join("rl-test-tx-keypair.bin"),
+            enable_upnp: false,
         };
         let tx = Transmitter::new(config).unwrap();
         assert!(!tx.device_id_display().is_empty());
@@ -183,6 +185,7 @@ mod tests {
             auto_delete_days: 0,
             default_bitrate: 16,
             keypair_path: std::env::temp_dir().join("rl-test-tx2-keypair.bin"),
+            enable_upnp: false,
         };
         let mut tx = Transmitter::new(config).unwrap();
         tx.add_test_channel("ch-001".into(), 440.0, Bitrate::Kbps16)
@@ -201,6 +204,7 @@ mod tests {
             auto_delete_days: 0,
             default_bitrate: 16,
             keypair_path: std::env::temp_dir().join("rl-test-tx3-keypair.bin"),
+            enable_upnp: false,
         };
         let mut tx = Transmitter::new(config).unwrap();
         tx.add_test_channel("ch-001".into(), 440.0, Bitrate::Kbps16)

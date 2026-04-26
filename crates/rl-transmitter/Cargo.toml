@@ -10,6 +10,7 @@ rl-crypto = { path = "../rl-crypto" }
 rl-net = { path = "../rl-net" }
 rl-tray = { path = "../rl-tray" }
 mdns-sd = { workspace = true }
+igd-next = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
