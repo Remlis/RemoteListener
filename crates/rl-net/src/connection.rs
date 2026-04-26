@@ -338,6 +338,16 @@ impl Connection {
         frame::encode_message(MessageType::ControlResponse, &resp)
     }
 
+    /// Create a CONTROL_RESPONSE message with StorageInfo payload.
+    pub fn create_control_response_with_storage(success: bool, error: &str, storage: StorageInfo) -> Vec<u8> {
+        let resp = ControlResponse {
+            success,
+            error: error.to_string(),
+            payload: Some(control_response::Payload::StorageInfo(storage)),
+        };
+        frame::encode_message(MessageType::ControlResponse, &resp)
+    }
+
     /// Create a DEVICE_STATUS message.
     pub fn create_device_status(
         device_name: &str,

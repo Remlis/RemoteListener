@@ -392,15 +392,19 @@ async fn handle_event(
                 mgr.is_paired(conn_id)
             };
             if is_paired {
-                let mut engine = state.engine.lock().await;
-                responses.push(handle_control_command(&mut engine, command));
+                let (resp, channels_changed) = handle_control_command(&state, command).await;
+                responses.push(resp);
 
                 // Notify all other connected receivers about state change
-                let infos = engine.channel_infos();
-                let status_frame =
-                    Connection::create_device_status(&state.device_name, infos, None, 0);
-                // TODO: push status_frame to all other connections
-                let _ = status_frame;
+                if channels_changed {
+                    let engine = state.engine.lock().await;
+                    let infos = engine.channel_infos();
+                    let storage = compute_storage_info(&state.recording_dir);
+                    let status_frame =
+                        Connection::create_device_status(&state.device_name, infos, Some(storage), 0);
+                    // TODO: push status_frame to all other connections
+                    let _ = status_frame;
+                }
             } else {
                 responses.push(Connection::create_control_response(false, "Not authorized"));
             }
@@ -474,10 +478,11 @@ async fn handle_event(
         ConnectionEvent::DeviceStatusRequested => {
             let engine = state.engine.lock().await;
             let infos = engine.channel_infos();
+            let storage = compute_storage_info(&state.recording_dir);
             responses.push(Connection::create_device_status(
                 &state.device_name,
                 infos,
-                None,
+                Some(storage),
                 0,
             ));
         }
@@ -601,45 +606,87 @@ fn spawn_stream_task(
     });
 }
 
-/// Handle a control command and return a response frame.
-fn handle_control_command(engine: &mut AudioEngine, cmd: &ControlCommand) -> Vec<u8> {
+/// Handle a control command and return a response frame and whether channels changed.
+async fn handle_control_command(
+    state: &Arc<TransmitterState>,
+    cmd: &ControlCommand,
+) -> (Vec<u8>, bool) {
     match cmd.control_type() {
         ControlType::SetChannelRecording => {
             let enabled = match &cmd.payload {
                 Some(control_command::Payload::RecordingEnabled(e)) => *e,
-                _ => {
-                    return Connection::create_control_response(false, "Missing recording_enabled")
-                }
+                _ => return (Connection::create_control_response(false, "Missing recording_enabled"), false),
             };
+            let mut engine = state.engine.lock().await;
             if let Some(ch) = engine.get_channel_mut(&cmd.channel_id) {
                 ch.recording_enabled = enabled;
-                Connection::create_control_response(true, "")
+                (Connection::create_control_response(true, ""), true)
             } else {
-                Connection::create_control_response(false, "Channel not found")
+                (Connection::create_control_response(false, "Channel not found"), false)
             }
         }
         ControlType::SetChannelBitrate => {
             let kbps = match &cmd.payload {
                 Some(control_command::Payload::Bitrate(k)) => *k,
-                _ => return Connection::create_control_response(false, "Missing bitrate"),
+                _ => return (Connection::create_control_response(false, "Missing bitrate"), false),
             };
+            let mut engine = state.engine.lock().await;
             if let Some(ch) = engine.get_channel_mut(&cmd.channel_id) {
                 let bitrate = match kbps {
                     16 => Bitrate::Kbps16,
                     32 => Bitrate::Kbps32,
                     64 => Bitrate::Kbps64,
                     128 => Bitrate::Kbps128,
-                    _ => return Connection::create_control_response(false, "Invalid bitrate"),
+                    _ => return (Connection::create_control_response(false, "Invalid bitrate"), false),
                 };
                 match ch.set_bitrate(bitrate) {
-                    Ok(()) => Connection::create_control_response(true, ""),
-                    Err(e) => Connection::create_control_response(false, &e.to_string()),
+                    Ok(()) => (Connection::create_control_response(true, ""), true),
+                    Err(e) => (Connection::create_control_response(false, &e.to_string()), false),
                 }
             } else {
-                Connection::create_control_response(false, "Channel not found")
+                (Connection::create_control_response(false, "Channel not found"), false)
             }
         }
-        _ => Connection::create_control_response(false, "Unsupported command"),
+        ControlType::DeleteRecording => {
+            let recording_id = match &cmd.payload {
+                Some(control_command::Payload::RecordingId(id)) => id.clone(),
+                _ => return (Connection::create_control_response(false, "Missing recording_id"), false),
+            };
+            let path = state.recording_dir.join(format!("{}.rlrec", recording_id));
+            if path.exists() {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => (Connection::create_control_response(true, ""), false),
+                    Err(e) => (Connection::create_control_response(false, &e.to_string()), false),
+                }
+            } else {
+                (Connection::create_control_response(false, "Recording not found"), false)
+            }
+        }
+        ControlType::GetStorageInfo => {
+            let storage = compute_storage_info(&state.recording_dir);
+            (
+                Connection::create_control_response_with_storage(true, "", storage),
+                false,
+            )
+        }
+        ControlType::SetAutoDeleteDays => {
+            let days = match &cmd.payload {
+                Some(control_command::Payload::AutoDeleteDays(d)) => *d,
+                _ => return (Connection::create_control_response(false, "Missing auto_delete_days"), false),
+            };
+            // Persist the new auto_delete_days to config
+            let config_path = dirs::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("remotelistener")
+                .join("config.toml");
+            let mut config = rl_core::config::Config::load(&config_path).unwrap_or_default();
+            config.auto_delete_days = days;
+            if let Err(e) = config.save(&config_path) {
+                return (Connection::create_control_response(false, &e.to_string()), false);
+            }
+            (Connection::create_control_response(true, ""), false)
+        }
+        _ => (Connection::create_control_response(false, "Unsupported command"), false),
     }
 }
 
@@ -720,4 +767,77 @@ async fn fetch_recording(
     ));
 
     Ok(frames)
+}
+
+/// Compute storage info for the recording directory.
+fn compute_storage_info(recording_dir: &std::path::Path) -> StorageInfo {
+    let mut used_bytes: u64 = 0;
+    let mut recording_count: u64 = 0;
+
+    if let Ok(entries) = std::fs::read_dir(recording_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("rlrec") {
+                if let Ok(metadata) = std::fs::metadata(&path) {
+                    used_bytes += metadata.len();
+                    recording_count += 1;
+                }
+            }
+        }
+    }
+
+    StorageInfo {
+        total_bytes: 0, // not easily available cross-platform
+        used_bytes,
+        recording_count,
+    }
+}
+
+/// Delete recordings older than `days` days from the recording directory.
+/// Returns the number of files deleted.
+pub fn auto_delete_recordings(recording_dir: &std::path::Path, days: u32) -> usize {
+    if days == 0 {
+        return 0; // 0 means never auto-delete
+    }
+
+    let cutoff = std::time::SystemTime::now()
+        - std::time::Duration::from_secs(days as u64 * 86400);
+
+    let Ok(entries) = std::fs::read_dir(recording_dir) else {
+        return 0;
+    };
+
+    let mut deleted = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rlrec") {
+            continue;
+        }
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            if let Ok(modified) = metadata.modified() {
+                if modified < cutoff {
+                    if std::fs::remove_file(&path).is_ok() {
+                        tracing::info!("Auto-deleted old recording: {:?}", path);
+                        deleted += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if deleted > 0 {
+        tracing::info!("Auto-delete: removed {} old recordings", deleted);
+    }
+
+    deleted
+}
+
+/// Run the auto-delete task periodically (once per hour).
+pub async fn run_auto_delete_task(recording_dir: std::path::PathBuf, auto_delete_days: u32) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+
+    loop {
+        interval.tick().await;
+        auto_delete_recordings(&recording_dir, auto_delete_days);
+    }
 }

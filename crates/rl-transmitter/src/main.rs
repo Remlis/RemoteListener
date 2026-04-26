@@ -102,6 +102,22 @@ async fn main() {
 
     println!("Transmitter running. Press Ctrl+C to stop.");
 
+    // Start auto-delete background task
+    let auto_delete_days = tx.config().auto_delete_days;
+    let recording_dir = tx.config().recording_dir.clone();
+    if auto_delete_days > 0 {
+        println!(
+            "Auto-delete: recordings older than {} days will be removed",
+            auto_delete_days
+        );
+        // Run once immediately at startup
+        rl_transmitter::server::auto_delete_recordings(&recording_dir, auto_delete_days);
+        tokio::spawn(rl_transmitter::server::run_auto_delete_task(
+            recording_dir,
+            auto_delete_days,
+        ));
+    }
+
     tokio::signal::ctrl_c().await.unwrap();
     println!("Shutting down.");
 

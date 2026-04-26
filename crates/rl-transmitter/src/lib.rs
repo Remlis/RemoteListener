@@ -14,8 +14,7 @@ use rl_net::connection::Connection;
 
 pub mod discovery;
 pub mod relay;
-#[allow(dead_code)]
-mod server;
+pub mod server;
 pub mod upnp;
 
 /// The transmitter application.

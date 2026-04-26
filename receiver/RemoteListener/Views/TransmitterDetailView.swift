@@ -100,6 +100,13 @@ struct TransmitterDetailView: View {
                                         .font(.caption)
                                         .foregroundColor(.blue)
                                 }
+
+                                // Recordings list
+                                NavigationLink(destination: RecordingsView(connection: connection, channelID: channel.id)) {
+                                    Label("Files", systemImage: "list.bullet")
+                                        .font(.caption)
+                                        .foregroundColor(.blue)
+                                }
                             }
                         }
                     }

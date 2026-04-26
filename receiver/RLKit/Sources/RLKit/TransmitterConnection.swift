@@ -63,6 +63,38 @@ public struct ControlResponseResult: Identifiable {
     }
 }
 
+/// Information about a recording on a transmitter.
+public struct RecordingInfo: Identifiable, Equatable {
+    public let id: String
+    public let channelID: String
+    public let startTimestamp: UInt64
+    public let endTimestamp: UInt64
+    public let fileSize: UInt64
+    public let durationSeconds: UInt32
+
+    public init(id: String, channelID: String, startTimestamp: UInt64, endTimestamp: UInt64, fileSize: UInt64, durationSeconds: UInt32) {
+        self.id = id
+        self.channelID = channelID
+        self.startTimestamp = startTimestamp
+        self.endTimestamp = endTimestamp
+        self.fileSize = fileSize
+        self.durationSeconds = durationSeconds
+    }
+}
+
+/// Storage info from the transmitter.
+public struct StorageInfo: Equatable {
+    public let totalBytes: UInt64
+    public let usedBytes: UInt64
+    public let recordingCount: UInt64
+
+    public init(totalBytes: UInt64, usedBytes: UInt64, recordingCount: UInt64) {
+        self.totalBytes = totalBytes
+        self.usedBytes = usedBytes
+        self.recordingCount = recordingCount
+    }
+}
+
 /// Manages a single connection to a transmitter.
 public class TransmitterConnection: ObservableObject, Identifiable {
     /// Unique identifier for this connection (host:port).
@@ -82,6 +114,16 @@ public class TransmitterConnection: ObservableObject, Identifiable {
 
     /// Last control response received from the transmitter.
     @Published public private(set) var lastControlResponse: ControlResponseResult?
+
+    /// Recordings list for the current channel.
+    @Published public private(set) var recordings: [RecordingInfo] = []
+
+    /// Storage info from the transmitter.
+    @Published public private(set) var storageInfo: StorageInfo?
+
+    /// Currently fetching recording data (accumulated chunks).
+    @Published public private(set) var fetchingRecordingID: String?
+    public let recordingDataSubject = PassthroughSubject<Data, Never>()
 
     /// Live audio chunks received from the transmitter.
     public let audioChunkSubject = PassthroughSubject<LiveAudioChunkData, Never>()
@@ -348,8 +390,14 @@ public class TransmitterConnection: ObservableObject, Identifiable {
             handleDeviceStatus(frame.body)
         case .controlResponse:
             handleControlResponse(frame.body)
-        case .recordingListResponse, .recordingChunk, .recordingFetchComplete, .recordingFetchError:
-            break // TODO: recording handling
+        case .recordingListResponse:
+            handleRecordingListResponse(frame.body)
+        case .recordingChunk:
+            handleRecordingChunk(frame.body)
+        case .recordingFetchComplete:
+            handleRecordingFetchComplete(frame.body)
+        case .recordingFetchError:
+            handleRecordingFetchError(frame.body)
         case .unknown:
             print("Received unknown message type: \(header.messageType.rawValue)")
         default:
@@ -545,12 +593,151 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     }
 
     private func handleControlResponse(_ data: Data) {
-        // ControlResponse { success = 1, message = 2 }
+        // ControlResponse { success = 1, message/error = 2, payload.storage_info = 10 }
         let success = data.parseProtoBool(field: 1)
         let message = data.parseProtoString(field: 2) ?? ""
+
+        // Check for StorageInfo payload (field 10, wire type 2)
+        var storage: StorageInfo?
+        if let storageData = data.parseProtoBytes(field: 10) {
+            storage = parseStorageInfo(storageData)
+        }
+
         DispatchQueue.main.async {
             self.lastControlResponse = ControlResponseResult(success: success, message: message)
+            if let storage = storage {
+                self.storageInfo = storage
+            }
         }
+    }
+
+    private func handleRecordingListResponse(_ data: Data) {
+        // RecordingListResponse { repeated RecordingInfo recordings = 1 }
+        var recordings: [RecordingInfo] = []
+        var offset = 0
+
+        while offset < data.count {
+            guard let tag = data[offset..].readVarInt(offset: &offset) else { break }
+            let fieldNumber = UInt32(tag >> 3)
+            let wireType = tag & 0x07
+
+            if fieldNumber == 1 && wireType == 2 {
+                guard let len = data[offset..].readVarInt(offset: &offset) else { break }
+                let endOffset = offset + Int(len)
+                guard endOffset <= data.count else { break }
+                let recData = data[offset..<endOffset]
+                offset = endOffset
+                if let rec = parseRecordingInfo(recData) {
+                    recordings.append(rec)
+                }
+            } else {
+                guard data.skipField(wireType: wireType, offset: &offset) else { break }
+            }
+        }
+
+        DispatchQueue.main.async {
+            self.recordings = recordings
+        }
+    }
+
+    private var recordingChunkBuffer: Data = Data()
+
+    private func handleRecordingChunk(_ data: Data) {
+        // RecordingChunk { recording_id = 1, data = 2, chunk_index = 3, is_last = 4 }
+        let recordingID = data.parseProtoString(field: 1) ?? ""
+        let chunkData = data.parseProtoBytes(field: 2) ?? Data()
+
+        recordingChunkBuffer.append(chunkData)
+
+        // Send incremental data via subject
+        DispatchQueue.main.async {
+            self.fetchingRecordingID = recordingID
+            self.recordingDataSubject.send(chunkData)
+        }
+    }
+
+    private func handleRecordingFetchComplete(_ data: Data) {
+        // RecordingFetchComplete { recording_id = 1 }
+        let recordingID = data.parseProtoString(field: 1) ?? ""
+        let completeData = recordingChunkBuffer
+        recordingChunkBuffer = Data()
+
+        DispatchQueue.main.async {
+            self.fetchingRecordingID = nil
+            self.recordingDataSubject.send(completeData)
+        }
+    }
+
+    private func handleRecordingFetchError(_ data: Data) {
+        // RecordingFetchError { recording_id = 1, error = 2 }
+        let recordingID = data.parseProtoString(field: 1) ?? ""
+        let error = data.parseProtoString(field: 2) ?? "Unknown error"
+
+        recordingChunkBuffer = Data()
+
+        DispatchQueue.main.async {
+            self.fetchingRecordingID = nil
+            self.lastControlResponse = ControlResponseResult(
+                success: false,
+                message: "Fetch error for \(recordingID): \(error)"
+            )
+        }
+    }
+
+    private func parseRecordingInfo(_ data: Data) -> RecordingInfo? {
+        var offset = 0
+        var recordingID = ""
+        var channelID = ""
+        var startTimestamp: UInt64 = 0
+        var endTimestamp: UInt64 = 0
+        var fileSize: UInt64 = 0
+        var durationSeconds: UInt32 = 0
+
+        while offset < data.count {
+            guard let tag = data[offset..].readVarInt(offset: &offset) else { return nil }
+            let fieldNumber = UInt32(tag >> 3)
+            let wireType = tag & 0x07
+
+            switch (fieldNumber, wireType) {
+            case (1, 2): recordingID = data.parseStringAt(offset: &offset) ?? ""
+            case (2, 2): channelID = data.parseStringAt(offset: &offset) ?? ""
+            case (3, 0): startTimestamp = data.parseVarIntAt(offset: &offset) ?? 0
+            case (4, 0): endTimestamp = data.parseVarIntAt(offset: &offset) ?? 0
+            case (5, 0): fileSize = data.parseVarIntAt(offset: &offset) ?? 0
+            case (6, 0): durationSeconds = UInt32(data.parseVarIntAt(offset: &offset) ?? 0)
+            default:
+                guard data.skipField(wireType: wireType, offset: &offset) else { return nil }
+            }
+        }
+
+        return RecordingInfo(
+            id: recordingID, channelID: channelID,
+            startTimestamp: startTimestamp, endTimestamp: endTimestamp,
+            fileSize: fileSize, durationSeconds: durationSeconds
+        )
+    }
+
+    private func parseStorageInfo(_ data: Data) -> StorageInfo? {
+        var offset = 0
+        var totalBytes: UInt64 = 0
+        var usedBytes: UInt64 = 0
+        var recordingCount: UInt64 = 0
+
+        while offset < data.count {
+            guard let tag = data[offset..].readVarInt(offset: &offset) else { return nil }
+            let fieldNumber = UInt32(tag >> 3)
+            let wireType = tag & 0x07
+
+            switch (fieldNumber, wireType) {
+            case (1, 0): totalBytes = data.parseVarIntAt(offset: &offset) ?? 0
+            case (2, 0): usedBytes = data.parseVarIntAt(offset: &offset) ?? 0
+            case (3, 0): recordingCount = data.parseVarIntAt(offset: &offset) ?? 0
+            default:
+                guard data.skipField(wireType: wireType, offset: &offset) else { return nil }
+            }
+        }
+
+        return StorageInfo(totalBytes: totalBytes, usedBytes: usedBytes, recordingCount: recordingCount)
     }
 
     /// Parse a ChannelInfo sub-message at the current offset (length-delimited).
@@ -591,6 +778,10 @@ extension Data {
 
     mutating func appendProtoBool(field: UInt32, value: Bool) {
         appendProtoVarInt(field: field, value: value ? 1 : 0)
+    }
+
+    mutating func appendProtoUInt32(field: UInt32, value: UInt32) {
+        appendProtoVarInt(field: field, value: UInt64(value))
     }
 }
 
