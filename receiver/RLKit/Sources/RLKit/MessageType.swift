@@ -63,7 +63,7 @@ public struct RLPHeader {
         var data = Data()
         // Field 1: message_type (varint)
         data.append(0x08) // field 1, wire type 0
-        data.appendVarInt(messageType.rawValue)
+        data.appendVarInt(UInt64(messageType.rawValue))
         // Field 2: compressed (bool)
         if compressed {
             data.append(0x10) // field 2, wire type 0
@@ -79,24 +79,24 @@ public struct RLPHeader {
         var compressed = false
 
         while offset < data.count {
-            guard let tag = data[offset..].readVarInt(offset: &offset) else { return nil }
+            guard let tag = data[offset...].readVarInt(offset: &offset) else { return nil }
             let fieldNumber = UInt32(tag >> 3)
             let wireType = tag & 0x07
 
             switch fieldNumber {
             case 1: // message_type
-                guard wireType == 0, let value = data[offset..].readVarInt(offset: &offset) else { return nil }
+                guard wireType == 0, let value = data[offset...].readVarInt(offset: &offset) else { return nil }
                 msgType = UInt32(value)
             case 2: // compressed
-                guard wireType == 0, let value = data[offset..].readVarInt(offset: &offset) else { return nil }
+                guard wireType == 0, let value = data[offset...].readVarInt(offset: &offset) else { return nil }
                 compressed = value != 0
             default:
                 // Skip unknown fields
                 switch wireType {
-                case 0: _ = data[offset..].readVarInt(offset: &offset)
+                case 0: _ = data[offset...].readVarInt(offset: &offset)
                 case 1: offset += 8
                 case 2:
-                    guard let len = data[offset..].readVarInt(offset: &offset) else { return nil }
+                    guard let len = data[offset...].readVarInt(offset: &offset) else { return nil }
                     offset += Int(len)
                 case 5: offset += 4
                 default: return nil

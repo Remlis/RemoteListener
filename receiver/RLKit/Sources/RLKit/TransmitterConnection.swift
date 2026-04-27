@@ -147,9 +147,11 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         guard let endpointPort = NWEndpoint.Port(rawValue: port) else { return }
 
         let tlsOptions = NWProtocolTLS.Options()
-        let alpnData = "rl/1.0".data(using: .utf8)!
-        sec_protocol_options_add_tls_application_protocol(
-            tlsOptions.securityProtocolOptions, alpnData)
+        let alpnString = "rl/1.0"
+        alpnString.withCString { alpnPtr in
+            sec_protocol_options_add_tls_application_protocol(
+                tlsOptions.securityProtocolOptions, alpnPtr)
+        }
 
         // Verify certificate fingerprint against expected value
         let expectedFingerprint = self.expectedFingerprint
@@ -161,7 +163,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
                     return
                 }
                 let trust = sec_trust_copy_ref(sec_trust).takeRetainedValue()
-                var cfError: Unmanaged<CFError>?
+                var cfError: CFError?
                 guard SecTrustEvaluateWithError(trust, &cfError) else {
                     print("TLS: certificate trust evaluation failed")
                     verifyCallback(false)
@@ -221,7 +223,11 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     private func sendHello() {
         // Minimal protobuf: Hello { device_name = "iOS Receiver", client_version = "0.1.0", timestamp = now }
         var body = Data()
+        #if canImport(UIKit)
         body.appendProtoString(field: 1, value: UIDevice.current.name)
+        #else
+        body.appendProtoString(field: 1, value: "RL Receiver")
+        #endif
         body.appendProtoString(field: 2, value: "0.1.0")
         body.appendProtoInt64(field: 3, value: Int64(Date().timeIntervalSince1970))
 
@@ -442,16 +448,16 @@ public class TransmitterConnection: ObservableObject, Identifiable {
 
         while offset < data.count {
             // Read field tag
-            guard let tag = data[offset..].readVarInt(offset: &offset) else { break }
+            guard let tag = data[offset...].readVarInt(offset: &offset) else { break }
             let fieldNumber = UInt32(tag >> 3)
             let wireType = tag & 0x07
 
             guard fieldNumber == 1 && wireType == 2 else {
                 // Skip non-ChannelInfo fields
-                if wireType == 2, let len = data[offset..].readVarInt(offset: &offset) {
+                if wireType == 2, let len = data[offset...].readVarInt(offset: &offset) {
                     offset += Int(len)
                 } else if wireType == 0 {
-                    _ = data[offset..].readVarInt(offset: &offset)
+                    _ = data[offset...].readVarInt(offset: &offset)
                 } else {
                     break
                 }
@@ -459,7 +465,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
             }
 
             // Read length-delimited ChannelInfo
-            guard let len = data[offset..].readVarInt(offset: &offset) else { break }
+            guard let len = data[offset...].readVarInt(offset: &offset) else { break }
             let endOffset = offset + Int(len)
             guard endOffset <= data.count else { break }
 
@@ -487,7 +493,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         var recordedBytes: UInt64 = 0
 
         while offset < data.count {
-            guard let tag = data[offset..].readVarInt(offset: &offset) else { return nil }
+            guard let tag = data[offset...].readVarInt(offset: &offset) else { return nil }
             let fieldNumber = UInt32(tag >> 3)
             let wireType = tag & 0x07
 
@@ -501,9 +507,9 @@ public class TransmitterConnection: ObservableObject, Identifiable {
             case (7, 0): recordedBytes = data.parseVarIntAt(offset: &offset) ?? 0
             default:
                 switch wireType {
-                case 0: _ = data[offset..].readVarInt(offset: &offset)
+                case 0: _ = data[offset...].readVarInt(offset: &offset)
                 case 2:
-                    if let len = data[offset..].readVarInt(offset: &offset) {
+                    if let len = data[offset...].readVarInt(offset: &offset) {
                         offset += Int(len)
                     }
                 default: break
@@ -573,7 +579,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
 
         var offset = 0
         while offset < data.count {
-            guard let tag = data[offset..].readVarInt(offset: &offset) else { break }
+            guard let tag = data[offset...].readVarInt(offset: &offset) else { break }
             let fieldNumber = UInt32(tag >> 3)
             let wireType = tag & 0x07
 
@@ -581,7 +587,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
             case (1, 2): deviceName = data.parseStringAt(offset: &offset)
             case (2, 2):
                 // Parse channel list (same format as ChannelList.channels)
-                guard let len = data[offset..].readVarInt(offset: &offset) else { break }
+                guard let len = data[offset...].readVarInt(offset: &offset) else { break }
                 let endOffset = offset + Int(len)
                 guard endOffset <= data.count else { break }
                 let channelListData = data[offset..<endOffset]
@@ -589,7 +595,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
                 // Parse inner ChannelInfo messages from ChannelList
                 var innerOffset = 0
                 while innerOffset < channelListData.count {
-                    guard let innerTag = channelListData[innerOffset..].readVarInt(offset: &innerOffset) else { break }
+                    guard let innerTag = channelListData[innerOffset...].readVarInt(offset: &innerOffset) else { break }
                     let innerField = UInt32(innerTag >> 3)
                     let innerWire = innerTag & 0x07
                     if innerField == 1 && innerWire == 2 {
@@ -636,12 +642,12 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         var offset = 0
 
         while offset < data.count {
-            guard let tag = data[offset..].readVarInt(offset: &offset) else { break }
+            guard let tag = data[offset...].readVarInt(offset: &offset) else { break }
             let fieldNumber = UInt32(tag >> 3)
             let wireType = tag & 0x07
 
             if fieldNumber == 1 && wireType == 2 {
-                guard let len = data[offset..].readVarInt(offset: &offset) else { break }
+                guard let len = data[offset...].readVarInt(offset: &offset) else { break }
                 let endOffset = offset + Int(len)
                 guard endOffset <= data.count else { break }
                 let recData = data[offset..<endOffset]
@@ -713,7 +719,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         var durationSeconds: UInt32 = 0
 
         while offset < data.count {
-            guard let tag = data[offset..].readVarInt(offset: &offset) else { return nil }
+            guard let tag = data[offset...].readVarInt(offset: &offset) else { return nil }
             let fieldNumber = UInt32(tag >> 3)
             let wireType = tag & 0x07
 
@@ -743,7 +749,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         var recordingCount: UInt64 = 0
 
         while offset < data.count {
-            guard let tag = data[offset..].readVarInt(offset: &offset) else { return nil }
+            guard let tag = data[offset...].readVarInt(offset: &offset) else { return nil }
             let fieldNumber = UInt32(tag >> 3)
             let wireType = tag & 0x07
 
@@ -761,7 +767,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
 
     /// Parse a ChannelInfo sub-message at the current offset (length-delimited).
     private func parseSubChannelInfo(_ data: Data, offset: inout Int) -> ChannelInfo? {
-        guard let len = data[offset..].readVarInt(offset: &offset) else { return nil }
+        guard let len = data[offset...].readVarInt(offset: &offset) else { return nil }
         let endOffset = offset + Int(len)
         guard endOffset <= data.count else { return nil }
         let channelData = data[offset..<endOffset]
@@ -811,7 +817,7 @@ extension Data {
     func parseProtoString(field: UInt32) -> String? {
         var offset = 0
         while offset < count {
-            guard let tag = self[offset..].readVarInt(offset: &offset) else { return nil }
+            guard let tag = self[offset...].readVarInt(offset: &offset) else { return nil }
             let fieldNumber = UInt32(tag >> 3)
             let wireType = tag & 0x07
 
@@ -827,7 +833,7 @@ extension Data {
     func parseProtoBool(field: UInt32) -> Bool {
         var offset = 0
         while offset < count {
-            guard let tag = self[offset..].readVarInt(offset: &offset) else { return false }
+            guard let tag = self[offset...].readVarInt(offset: &offset) else { return false }
             let fieldNumber = UInt32(tag >> 3)
             let wireType = tag & 0x07
 
@@ -843,7 +849,7 @@ extension Data {
     func parseProtoVarInt(field: UInt32) -> UInt64? {
         var offset = 0
         while offset < count {
-            guard let tag = self[offset..].readVarInt(offset: &offset) else { return nil }
+            guard let tag = self[offset...].readVarInt(offset: &offset) else { return nil }
             let fieldNumber = UInt32(tag >> 3)
             let wireType = tag & 0x07
 
@@ -859,12 +865,12 @@ extension Data {
     func parseProtoBytes(field: UInt32) -> Data? {
         var offset = 0
         while offset < count {
-            guard let tag = self[offset..].readVarInt(offset: &offset) else { return nil }
+            guard let tag = self[offset...].readVarInt(offset: &offset) else { return nil }
             let fieldNumber = UInt32(tag >> 3)
             let wireType = tag & 0x07
 
             if fieldNumber == field && wireType == 2 {
-                guard let len = self[offset..].readVarInt(offset: &offset) else { return nil }
+                guard let len = self[offset...].readVarInt(offset: &offset) else { return nil }
                 let endOffset = offset + Int(len)
                 guard endOffset <= count else { return nil }
                 let result = Data(self[offset..<endOffset])
@@ -878,7 +884,7 @@ extension Data {
     }
 
     func parseStringAt(offset: inout Int) -> String? {
-        guard let len = self[offset..].readVarInt(offset: &offset) else { return nil }
+        guard let len = self[offset...].readVarInt(offset: &offset) else { return nil }
         let endOffset = offset + Int(len)
         guard endOffset <= count else { return nil }
         let strData = self[offset..<endOffset]
@@ -887,20 +893,20 @@ extension Data {
     }
 
     func parseBoolAt(offset: inout Int) -> Bool {
-        guard let value = self[offset..].readVarInt(offset: &offset) else { return false }
+        guard let value = self[offset...].readVarInt(offset: &offset) else { return false }
         return value != 0
     }
 
     func parseVarIntAt(offset: inout Int) -> UInt64? {
-        self[offset..].readVarInt(offset: &offset)
+        self[offset...].readVarInt(offset: &offset)
     }
 
     func skipField(wireType: UInt64, offset: inout Int) -> Bool {
         switch wireType {
-        case 0: _ = self[offset..].readVarInt(offset: &offset)
+        case 0: _ = self[offset...].readVarInt(offset: &offset)
         case 1: offset += 8
         case 2:
-            guard let len = self[offset..].readVarInt(offset: &offset) else { return false }
+            guard let len = self[offset...].readVarInt(offset: &offset) else { return false }
             offset += Int(len)
         case 5: offset += 4
         default: return false // Unknown wire type — cannot skip

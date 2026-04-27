@@ -3,6 +3,7 @@
 
 import SwiftUI
 import CryptoKit
+import CryptoSwift
 
 struct KeyTransferView: View {
     @ObservedObject var connection: TransmitterConnection
@@ -176,18 +177,16 @@ struct KeyTransferView: View {
     }
 
     private func deriveKEK(passphrase: Data, salt: Data, n: UInt32, r: UInt32, p: UInt32) throws -> SymmetricKey {
-        // Use CryptoKit's derived key with HKDF after scrypt
-        // Note: CryptoKit doesn't have scrypt, so we need to use a workaround
-        // For now, we'll use a simple HKDF derivation as a placeholder
-        // TODO: Implement proper scrypt key derivation for cross-platform compatibility
-
-        let inputKeyMaterial = SymmetricKey(data: passphrase)
-        let derivedKey = HKDF.deriveKey(
-            inputKeyMaterial: inputKeyMaterial,
-            salt: salt,
-            info: Data(),
-            outputByteCount: 32
-        )
-        return derivedKey
+        // scrypt key derivation matching Rust's scrypt crate
+        // Rust uses: scrypt::Params::new(n.ilog2() as u8, r, p, 32)
+        let logN = UInt8(n == 0 ? 0 : n.bitWidth - n.leadingZeroBitCount - 1)
+        let params = try ScryptParams(N: logN, r: Int(r), p: Int(p))
+        let derivedBytes = try Scrypt(password: passphrase.bytes,
+                                       salt: salt.bytes,
+                                       blocksize: Int(r),
+                                       costParameter: Int(n),
+                                       parallelism: Int(p),
+                                       keyLength: 32).calculate()
+        return SymmetricKey(data: derivedBytes)
     }
 }

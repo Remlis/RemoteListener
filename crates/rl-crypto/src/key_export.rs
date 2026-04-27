@@ -134,3 +134,57 @@ pub enum KeyError {
     #[error("scrypt key derivation failed")]
     ScryptFailed,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Deterministic cross-platform test vector for scrypt key derivation.
+    /// This must match the Swift RLKitTests test vector.
+    #[test]
+    fn scrypt_derive_kek_deterministic() {
+        // Fixed inputs
+        let passphrase = b"test-password";
+        let salt = [0x01u8; 16]; // 16 bytes of 0x01
+        let n: u32 = 1024; // 2^10 — small for test speed
+        let r: u32 = 8;
+        let p: u32 = 1;
+
+        // Compute scrypt output directly
+        let mut kek_bytes = [0u8; 32];
+        scrypt::scrypt(
+            passphrase,
+            &salt,
+            &scrypt::Params::new(n.ilog2() as u8, r, p, 32).unwrap(),
+            &mut kek_bytes,
+        )
+        .unwrap();
+
+        // Expected scrypt output (pre-computed via `scrypt` crate)
+        // scrypt("test-password", 0x01*16, N=1024, r=8, p=1, len=32)
+        let expected: [u8; 32] = [
+            0x36, 0x28, 0xa6, 0x06, 0xdb, 0x99, 0x72, 0x6a,
+            0x23, 0xbd, 0x6e, 0xa8, 0xda, 0x74, 0xc8, 0x96,
+            0x15, 0x83, 0xb7, 0x2e, 0x7f, 0xba, 0xaf, 0xf3,
+            0x2c, 0xd2, 0x43, 0xd9, 0xcc, 0xc9, 0x75, 0x30,
+        ];
+        assert_eq!(kek_bytes, expected, "scrypt KEK derivation mismatch — cross-platform compatibility broken");
+    }
+
+    #[test]
+    fn export_import_roundtrip() {
+        let secret_key = [0x42u8; 32];
+        let passphrase = b"roundtrip-pass";
+
+        let blob = export_key(&secret_key, passphrase).unwrap();
+        let imported = import_key(&blob, passphrase).unwrap();
+        assert_eq!(imported, secret_key);
+    }
+
+    #[test]
+    fn import_wrong_passphrase_fails() {
+        let secret_key = [0x42u8; 32];
+        let blob = export_key(&secret_key, b"correct-pass").unwrap();
+        assert!(import_key(&blob, b"wrong-pass").is_err());
+    }
+}

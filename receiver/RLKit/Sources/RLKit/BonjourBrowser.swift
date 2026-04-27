@@ -32,7 +32,7 @@ public struct DiscoveredTransmitter: Identifiable, Equatable {
 }
 
 /// Browses for `_rllistener._tcp` services on the local network via Bonjour.
-public class BonjourBrowser: ObservableObject {
+public class BonjourBrowser: NSObject, ObservableObject {
     /// The mDNS service type to browse for.
     public static let serviceType = "_rllistener._tcp"
 
@@ -45,7 +45,7 @@ public class BonjourBrowser: ObservableObject {
     private var browser: NetServiceBrowser?
     private var resolvingServices: [String: NetService] = [:]
 
-    public init() {}
+    public override init() {}
 
     /// Start browsing for transmitters on the local network.
     public func startSearching() {
@@ -164,23 +164,27 @@ extension BonjourBrowser: NetServiceDelegate {
         guard count >= MemoryLayout<sockaddr>.size else { return nil }
 
         var addr = sockaddr()
-        data.copyBytes(to: &addr, count: MemoryLayout<sockaddr>.size)
+        _ = data.withUnsafeBytes { ptr in
+            memcpy(&addr, ptr.baseAddress!, MemoryLayout<sockaddr>.size)
+        }
 
         if addr.sa_family == sa_family_t(AF_INET) {
             guard count >= MemoryLayout<sockaddr_in>.size else { return nil }
             var addrIn = sockaddr_in()
-            data.copyBytes(to: &addrIn, count: MemoryLayout<sockaddr_in>.size)
+            _ = data.withUnsafeBytes { ptr in
+                memcpy(&addrIn, ptr.baseAddress!, MemoryLayout<sockaddr_in>.size)
+            }
             var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-            let ptr = UnsafeMutablePointer(&addrIn.sin_addr)
-            inet_ntop(AF_INET, ptr, &buffer, socklen_t(buffer.count))
+            inet_ntop(AF_INET, &addrIn.sin_addr, &buffer, socklen_t(buffer.count))
             return String(cString: buffer)
         } else if addr.sa_family == sa_family_t(AF_INET6) {
             guard count >= MemoryLayout<sockaddr_in6>.size else { return nil }
             var addrIn6 = sockaddr_in6()
-            data.copyBytes(to: &addrIn6, count: MemoryLayout<sockaddr_in6>.size)
+            _ = data.withUnsafeBytes { ptr in
+                memcpy(&addrIn6, ptr.baseAddress!, MemoryLayout<sockaddr_in6>.size)
+            }
             var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
-            let ptr = UnsafeMutablePointer(&addrIn6.sin6_addr)
-            inet_ntop(AF_INET6, ptr, &buffer, socklen_t(buffer.count))
+            inet_ntop(AF_INET6, &addrIn6.sin6_addr, &buffer, socklen_t(buffer.count))
             return String(cString: buffer)
         }
         return nil

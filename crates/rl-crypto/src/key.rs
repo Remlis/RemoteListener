@@ -128,4 +128,48 @@ mod tests {
         let kp2 = KeyPair::generate();
         assert_ne!(kp1.fingerprint(), kp2.fingerprint());
     }
+
+    /// Cross-platform test vector for ECDH + HKDF-SHA256.
+    /// This uses fixed keys so the output is deterministic and can be
+    /// verified in Swift/CryptoKit.
+    #[test]
+    fn ecdh_hkdf_cross_platform_vector() {
+        // Fixed private keys (little-endian X25519 scalar)
+        let alice_secret: [u8; 32] = [
+            0x77, 0x07, 0x6d, 0x0a, 0x73, 0x18, 0xa5, 0x7d,
+            0x3c, 0x16, 0xc1, 0x72, 0x51, 0xb2, 0x66, 0x45,
+            0xdf, 0x4c, 0x2f, 0x87, 0xeb, 0xc0, 0x99, 0x2a,
+            0xb1, 0x77, 0xfb, 0xa5, 0x1d, 0xb9, 0x2c, 0x2a,
+        ];
+        let bob_secret: [u8; 32] = [
+            0x5d, 0xab, 0x08, 0x7e, 0x62, 0x4a, 0x8a, 0x4b,
+            0x79, 0xe1, 0x7f, 0x8b, 0x83, 0x80, 0x0e, 0xe6,
+            0x6f, 0x3b, 0xb1, 0x29, 0x26, 0x18, 0xb6, 0xfd,
+            0x1c, 0x2f, 0x8b, 0x27, 0xff, 0x88, 0xe9, 0xeb,
+        ];
+
+        let alice = KeyPair::from_bytes(alice_secret);
+        let bob = KeyPair::from_bytes(bob_secret);
+
+        // Alice's public key (for Swift verification)
+        let alice_pub = alice.public_key().as_bytes();
+        // Bob's public key
+        let bob_pub = bob.public_key().as_bytes();
+
+        // ECDH both ways
+        let shared_ab = alice.diffie_hellman(bob.public_key());
+        let shared_ba = bob.diffie_hellman(alice.public_key());
+
+        // Derive KEK with HKDF-SHA256(salt=empty, info=b"rl-recording-v1")
+        let info = b"rl-recording-v1";
+        let dek_ab = shared_ab.derive_dek(info);
+        let dek_ba = shared_ba.derive_dek(info);
+
+        assert_eq!(dek_ab, dek_ba, "ECDH+HKDF must be symmetric");
+
+        // Print values for Swift test vector (visible with --nocapture)
+        eprintln!("alice_public:  {:02x?}", alice_pub);
+        eprintln!("bob_public:    {:02x?}", bob_pub);
+        eprintln!("derived_dek:   {:02x?}", dek_ab);
+    }
 }

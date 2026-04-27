@@ -1,0 +1,427 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		3AAF431B78AC2EB0A6D02D97 /* RemoteListenerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2ED23ED19BE3F4C23793D99 /* RemoteListenerApp.swift */; };
+		49BE6CEA4A1F98375B74BD1D /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7BCFA98226CA969D2982C90 /* PairingView.swift */; };
+		4EB5E1FF0D67B6DBCB91C373 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28BEA9F613253E18053540E9 /* SettingsView.swift */; };
+		4F1348D72E2AFC60ABDAE376 /* RLKit in Frameworks */ = {isa = PBXBuildFile; productRef = C183F0E436E543B76D7777A3 /* RLKit */; };
+		8023677226EB05AFD18ED3D9 /* TransmittersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38BBDF62BAE1F38DA1234B41 /* TransmittersView.swift */; };
+		85F3F5E05229C708233C65DA /* CryptoSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 076B2FEE1CA3FCDCAFF131A8 /* CryptoSwift */; };
+		88AC79AB19D3B3F0696BF70D /* KeyTransferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 834BBA4FD212B17A45009791 /* KeyTransferView.swift */; };
+		95FAA65E6C63ECF1864016B2 /* RecordingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB80A00F18473D8E2D66F08 /* RecordingsView.swift */; };
+		B8315F949E4C607F7F8C7850 /* AudioPlayerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2CA3B4BBCB44F7A2075034 /* AudioPlayerService.swift */; };
+		B89542F1D6A1D537251CA34E /* CryptoService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B1665766B015FE0367E21FE /* CryptoService.swift */; };
+		DCA0DB0998811F58CED9B6B2 /* LibOpusBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 044FA0A556327A6CAD771E5F /* LibOpusBridge.swift */; };
+		E74E7F50431335D0134088E1 /* rl_opus_bridge.c in Sources */ = {isa = PBXBuildFile; fileRef = F7EE8540473BE1EAB095690E /* rl_opus_bridge.c */; };
+		E99C58DD45C91DF78FA43AD7 /* TransmitterDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5583FFB00BF8BADE682AAB4E /* TransmitterDetailView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		044FA0A556327A6CAD771E5F /* LibOpusBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibOpusBridge.swift; sourceTree = "<group>"; };
+		28BEA9F613253E18053540E9 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		38BBDF62BAE1F38DA1234B41 /* TransmittersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransmittersView.swift; sourceTree = "<group>"; };
+		5583FFB00BF8BADE682AAB4E /* TransmitterDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransmitterDetailView.swift; sourceTree = "<group>"; };
+		6AB80A00F18473D8E2D66F08 /* RecordingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingsView.swift; sourceTree = "<group>"; };
+		7B1665766B015FE0367E21FE /* CryptoService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoService.swift; sourceTree = "<group>"; };
+		834BBA4FD212B17A45009791 /* KeyTransferView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyTransferView.swift; sourceTree = "<group>"; };
+		A4663D7F798DFA558B2C9BD7 /* RemoteListener.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RemoteListener.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB2CA3B4BBCB44F7A2075034 /* AudioPlayerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerService.swift; sourceTree = "<group>"; };
+		AF32385E5C1023B25083E847 /* RemoteListener.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = RemoteListener.entitlements; sourceTree = "<group>"; };
+		C37BA4BB7670B3C875561AA0 /* RLKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = RLKit; path = RLKit; sourceTree = SOURCE_ROOT; };
+		D7BCFA98226CA969D2982C90 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		E2ED23ED19BE3F4C23793D99 /* RemoteListenerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteListenerApp.swift; sourceTree = "<group>"; };
+		F7EE8540473BE1EAB095690E /* rl_opus_bridge.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = rl_opus_bridge.c; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E29D4F47B2BC426EFA56A729 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4F1348D72E2AFC60ABDAE376 /* RLKit in Frameworks */,
+				85F3F5E05229C708233C65DA /* CryptoSwift in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		17B08DC51B519D174EF51406 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				C37BA4BB7670B3C875561AA0 /* RLKit */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		4CF0C3B105554429BE43521A /* RemoteListener */ = {
+			isa = PBXGroup;
+			children = (
+				AF32385E5C1023B25083E847 /* RemoteListener.entitlements */,
+				F8B8B0B897ACC4DF2016A759 /* App */,
+				AC04F8E763A3BADB9CEA318B /* Services */,
+				6708E44671049CD6BF28269E /* Views */,
+			);
+			path = RemoteListener;
+			sourceTree = "<group>";
+		};
+		6708E44671049CD6BF28269E /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				834BBA4FD212B17A45009791 /* KeyTransferView.swift */,
+				D7BCFA98226CA969D2982C90 /* PairingView.swift */,
+				6AB80A00F18473D8E2D66F08 /* RecordingsView.swift */,
+				28BEA9F613253E18053540E9 /* SettingsView.swift */,
+				5583FFB00BF8BADE682AAB4E /* TransmitterDetailView.swift */,
+				38BBDF62BAE1F38DA1234B41 /* TransmittersView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		6A20E6D4EBE9492201CEACEC /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A4663D7F798DFA558B2C9BD7 /* RemoteListener.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		94AC1731810BBBF674177512 = {
+			isa = PBXGroup;
+			children = (
+				17B08DC51B519D174EF51406 /* Packages */,
+				4CF0C3B105554429BE43521A /* RemoteListener */,
+				6A20E6D4EBE9492201CEACEC /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AC04F8E763A3BADB9CEA318B /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				AB2CA3B4BBCB44F7A2075034 /* AudioPlayerService.swift */,
+				7B1665766B015FE0367E21FE /* CryptoService.swift */,
+				044FA0A556327A6CAD771E5F /* LibOpusBridge.swift */,
+				F7EE8540473BE1EAB095690E /* rl_opus_bridge.c */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		F8B8B0B897ACC4DF2016A759 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				E2ED23ED19BE3F4C23793D99 /* RemoteListenerApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		DB5C855579C91AD8E4FF2FC9 /* RemoteListener */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 17857D6274987F45E0EF72E4 /* Build configuration list for PBXNativeTarget "RemoteListener" */;
+			buildPhases = (
+				DAA263DFD77EBD6032723372 /* Sources */,
+				E29D4F47B2BC426EFA56A729 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RemoteListener;
+			packageProductDependencies = (
+				C183F0E436E543B76D7777A3 /* RLKit */,
+				076B2FEE1CA3FCDCAFF131A8 /* CryptoSwift */,
+			);
+			productName = RemoteListener;
+			productReference = A4663D7F798DFA558B2C9BD7 /* RemoteListener.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E51E6B54DCC85D480C08F26B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = DDF02F7BA5B90FBF0C3DE579 /* Build configuration list for PBXProject "RemoteListener" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 94AC1731810BBBF674177512;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				6A829962FEC15772348B3C4E /* XCRemoteSwiftPackageReference "CryptoSwift" */,
+				BF6C1E2CB3BED580C612FF55 /* XCLocalSwiftPackageReference "RLKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 6A20E6D4EBE9492201CEACEC /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				DB5C855579C91AD8E4FF2FC9 /* RemoteListener */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		DAA263DFD77EBD6032723372 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B8315F949E4C607F7F8C7850 /* AudioPlayerService.swift in Sources */,
+				B89542F1D6A1D537251CA34E /* CryptoService.swift in Sources */,
+				88AC79AB19D3B3F0696BF70D /* KeyTransferView.swift in Sources */,
+				DCA0DB0998811F58CED9B6B2 /* LibOpusBridge.swift in Sources */,
+				49BE6CEA4A1F98375B74BD1D /* PairingView.swift in Sources */,
+				95FAA65E6C63ECF1864016B2 /* RecordingsView.swift in Sources */,
+				3AAF431B78AC2EB0A6D02D97 /* RemoteListenerApp.swift in Sources */,
+				4EB5E1FF0D67B6DBCB91C373 /* SettingsView.swift in Sources */,
+				E99C58DD45C91DF78FA43AD7 /* TransmitterDetailView.swift in Sources */,
+				8023677226EB05AFD18ED3D9 /* TransmittersView.swift in Sources */,
+				E74E7F50431335D0134088E1 /* rl_opus_bridge.c in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		12AEE65A15B8661256DBE7D2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C66EFD98DEC8A50526F352DC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		DE5FDF36E8F9ACAD4CA761D2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = RemoteListener/RemoteListener.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rl.RemoteListener;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		F3B2CD7D26F6C85AD525948A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = RemoteListener/RemoteListener.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rl.RemoteListener;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		17857D6274987F45E0EF72E4 /* Build configuration list for PBXNativeTarget "RemoteListener" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F3B2CD7D26F6C85AD525948A /* Debug */,
+				DE5FDF36E8F9ACAD4CA761D2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DDF02F7BA5B90FBF0C3DE579 /* Build configuration list for PBXProject "RemoteListener" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				12AEE65A15B8661256DBE7D2 /* Debug */,
+				C66EFD98DEC8A50526F352DC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		BF6C1E2CB3BED580C612FF55 /* XCLocalSwiftPackageReference "RLKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = RLKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		6A829962FEC15772348B3C4E /* XCRemoteSwiftPackageReference "CryptoSwift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/krzyzanowskim/CryptoSwift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.8.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		076B2FEE1CA3FCDCAFF131A8 /* CryptoSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6A829962FEC15772348B3C4E /* XCRemoteSwiftPackageReference "CryptoSwift" */;
+			productName = CryptoSwift;
+		};
+		C183F0E436E543B76D7777A3 /* RLKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = RLKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = E51E6B54DCC85D480C08F26B /* Project object */;
+}
