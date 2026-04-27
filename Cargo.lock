@@ -3510,11 +3510,14 @@ name = "rl-testtool"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "rl-audio",
  "rl-core",
  "rl-crypto",
  "rl-net",
  "rpassword",
+ "rustls",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "tracing-subscriber",
 ]

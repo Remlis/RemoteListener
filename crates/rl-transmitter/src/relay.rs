@@ -340,12 +340,10 @@ async fn connect_tls_relay(
     let domain = rustls::pki_types::ServerName::try_from(relay_addr.ip().to_string())
         .map_err(|e| RelayError::Io(io::Error::new(io::ErrorKind::InvalidInput, e.to_string())))?;
 
-    connector.connect(domain, tcp_stream).await.map_err(|e| {
-        RelayError::Io(io::Error::other(format!(
-            "TLS handshake failed: {}",
-            e
-        )))
-    })
+    connector
+        .connect(domain, tcp_stream)
+        .await
+        .map_err(|e| RelayError::Io(io::Error::other(format!("TLS handshake failed: {}", e))))
 }
 
 /// Join a relay as a "server" (waiting for incoming connections).

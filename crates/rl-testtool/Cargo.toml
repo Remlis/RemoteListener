@@ -7,8 +7,11 @@ edition.workspace = true
 rl-core = { path = "../rl-core" }
 rl-crypto = { path = "../rl-crypto" }
 rl-net = { path = "../rl-net" }
+rl-audio = { path = "../rl-audio" }
 clap = { workspace = true }
 tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 rpassword = "7"
