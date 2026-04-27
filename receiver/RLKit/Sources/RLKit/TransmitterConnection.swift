@@ -264,26 +264,20 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     /// Set recording enabled/disabled for a channel.
     public func setChannelRecording(channelID: String, enabled: Bool) {
         var body = Data()
-        // ControlCommand { control_type = 1 (SET_CHANNEL_RECORDING), channel_id, payload.recording_enabled }
+        // ControlCommand { control_type = 1, channel_id = 2, recording_enabled = 10 }
         body.appendProtoUInt32(field: 1, value: 1) // SET_CHANNEL_RECORDING
         body.appendProtoString(field: 2, value: channelID)
-        // payload: oneof { recording_enabled = 1 }
-        var payload = Data()
-        payload.appendProtoBool(field: 1, value: enabled)
-        body.appendProtoBytes(field: 3, value: payload)
+        body.appendProtoBool(field: 10, value: enabled) // oneof payload field 10
         sendFrame(messageType: .controlCommand, body: body)
     }
 
     /// Set bitrate for a channel.
     public func setChannelBitrate(channelID: String, bitrate: UInt32) {
         var body = Data()
-        // ControlCommand { control_type = 2 (SET_CHANNEL_BITRATE), channel_id, payload.bitrate }
+        // ControlCommand { control_type = 2, channel_id = 2, bitrate = 11 }
         body.appendProtoUInt32(field: 1, value: 2) // SET_CHANNEL_BITRATE
         body.appendProtoString(field: 2, value: channelID)
-        // payload: oneof { bitrate = 2 }
-        var payload = Data()
-        payload.appendProtoUInt32(field: 2, value: bitrate)
-        body.appendProtoBytes(field: 3, value: payload)
+        body.appendProtoUInt32(field: 11, value: bitrate) // oneof payload field 11
         sendFrame(messageType: .controlCommand, body: body)
     }
 
@@ -304,9 +298,9 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     /// Delete a recording.
     public func deleteRecording(recordingID: String) {
         var body = Data()
-        // ControlCommand { control_type = 3 (DELETE_RECORDING), channel_id = recordingID }
+        // ControlCommand { control_type = 3, recording_id = 12 }
         body.appendProtoUInt32(field: 1, value: 3) // DELETE_RECORDING
-        body.appendProtoString(field: 2, value: recordingID)
+        body.appendProtoString(field: 12, value: recordingID) // oneof payload field 12
         sendFrame(messageType: .controlCommand, body: body)
     }
 
@@ -321,11 +315,9 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     /// Set auto-delete days on the transmitter.
     public func setAutoDeleteDays(_ days: UInt32) {
         var body = Data()
-        // ControlCommand { control_type = 5 (SET_AUTO_DELETE_DAYS), payload.auto_delete_days }
+        // ControlCommand { control_type = 5, auto_delete_days = 13 }
         body.appendProtoUInt32(field: 1, value: 5) // SET_AUTO_DELETE_DAYS
-        var payload = Data()
-        payload.appendProtoUInt32(field: 5, value: days) // field 13 in proto, but in oneof payload it's field 5
-        body.appendProtoBytes(field: 3, value: payload)
+        body.appendProtoUInt32(field: 13, value: days) // oneof payload field 13
         sendFrame(messageType: .controlCommand, body: body)
     }
 
@@ -549,7 +541,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     }
 
     private func handlePairResponse(_ data: Data) {
-        // PairResponse { public_key = 1, private_key = 2, existing_key_fingerprints = 3 }
+        // PairResponse { public_key = 1, existing_key_fingerprints = 3 }
         let publicKeyData = data.parseProtoBytes(field: 1)
         // Store the transmitter's public key for future TLS fingerprint verification
         if let pubKey = publicKeyData {
@@ -557,9 +549,6 @@ public class TransmitterConnection: ObservableObject, Identifiable {
             expectedFingerprint = fingerprint
             print("Paired with transmitter fingerprint: \(fingerprint)")
         }
-        // Note: private_key (field 2) handling is a protocol concern —
-        // the current protocol sends the transmitter's private key which is
-        // a design issue (issue #4). For now, we acknowledge the pairing.
         DispatchQueue.main.async {
             self.isPaired = true
         }
@@ -779,8 +768,13 @@ public class TransmitterConnection: ObservableObject, Identifiable {
 // MARK: - Protobuf encoding helpers
 
 extension Data {
+    /// Append a protobuf field tag (VarInt-encoded: field_number << 3 | wire_type).
+    private mutating func appendTag(field: UInt32, wireType: UInt8) {
+        appendVarInt(UInt64((field << 3) | UInt32(wireType)))
+    }
+
     mutating func appendProtoVarInt(field: UInt32, value: UInt64) {
-        append(UInt8((field << 3) | 0)) // wire type 0 = varint
+        appendTag(field: field, wireType: 0)
         appendVarInt(value)
     }
 
@@ -790,13 +784,13 @@ extension Data {
 
     mutating func appendProtoString(field: UInt32, value: String) {
         guard let strData = value.data(using: .utf8) else { return }
-        append(UInt8((field << 3) | 2)) // wire type 2 = length-delimited
+        appendTag(field: field, wireType: 2)
         appendVarInt(UInt64(strData.count))
         append(strData)
     }
 
     mutating func appendProtoBytes(field: UInt32, value: Data) {
-        append(UInt8((field << 3) | 2)) // wire type 2
+        appendTag(field: field, wireType: 2)
         appendVarInt(UInt64(value.count))
         append(value)
     }

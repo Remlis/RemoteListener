@@ -480,7 +480,6 @@ async fn handle_event(
 
             responses.push(Connection::create_pair_response(
                 state.keypair.public_key().as_bytes().to_vec(),
-                Vec::new(), // No private key blob
                 existing_fps,
             ));
 

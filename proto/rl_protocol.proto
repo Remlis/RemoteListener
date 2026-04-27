@@ -70,7 +70,9 @@ message PairRequest {
 
 message PairResponse {
   bytes public_key = 1;       // X25519 public key of the transmitter
-  bytes private_key = 2;      // X25519 private key (transferred to receiver, then deleted)
+  // Note: private_key (field 2) was removed. Receivers derive KEK via ECDH
+  // using their own private key + the transmitter's public key.
+  // Field 2 is reserved and must not be reused.
   repeated bytes existing_key_fingerprints = 3;  // SHA-256 fingerprints of existing paired keys
 }
 

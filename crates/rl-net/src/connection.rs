@@ -228,12 +228,10 @@ impl Connection {
     /// Create a PAIR_RESPONSE message.
     pub fn create_pair_response(
         public_key: Vec<u8>,
-        private_key: Vec<u8>,
         existing_fingerprints: Vec<Vec<u8>>,
     ) -> Vec<u8> {
         let resp = PairResponse {
             public_key,
-            private_key,
             existing_key_fingerprints: existing_fingerprints,
         };
         frame::encode_message(MessageType::PairResponse, &resp)

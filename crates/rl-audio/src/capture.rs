@@ -1,6 +1,8 @@
 //! Audio input trait and implementations.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
@@ -104,6 +106,8 @@ pub struct CpalInput {
     device_uid: String,
     stream: Option<cpal::Stream>,
     sample_rate: u32,
+    /// Per-instance sample position counter (avoids the static sharing bug).
+    sample_pos: Arc<AtomicU64>,
 }
 
 impl CpalInput {
@@ -132,6 +136,7 @@ impl CpalInput {
             device_uid: uid,
             stream: None,
             sample_rate,
+            sample_pos: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -167,6 +172,7 @@ impl CpalInput {
             device_uid: uid.to_string(),
             stream: None,
             sample_rate,
+            sample_pos: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -241,6 +247,7 @@ impl AudioInput for CpalInput {
         let channels = config.channels;
         let target_rate = 48000u32;
         let chunk_size = 960usize; // 20ms at 48kHz mono
+        let sample_pos = self.sample_pos.clone();
 
         let (tx, rx) = mpsc::channel();
 
@@ -250,7 +257,7 @@ impl AudioInput for CpalInput {
             cpal::SampleFormat::I16 => device.build_input_stream::<i16, _, _>(
                 &config,
                 move |data: &[i16], _info: &cpal::InputCallbackInfo| {
-                    capture_callback(data, channels, native_rate, target_rate, chunk_size, &tx);
+                    capture_callback(data, channels, native_rate, target_rate, chunk_size, &tx, &sample_pos);
                 },
                 move |err| {
                     tracing::error!("Audio capture error: {}", err);
@@ -264,7 +271,7 @@ impl AudioInput for CpalInput {
             cpal::SampleFormat::F32 => device.build_input_stream::<f32, _, _>(
                 &config,
                 move |data: &[f32], _info: &cpal::InputCallbackInfo| {
-                    capture_callback_f32(data, channels, native_rate, target_rate, chunk_size, &tx);
+                    capture_callback_f32(data, channels, native_rate, target_rate, chunk_size, &tx, &sample_pos);
                 },
                 move |err| {
                     tracing::error!("Audio capture error: {}", err);
@@ -334,9 +341,8 @@ fn capture_callback(
     target_rate: u32,
     chunk_size: usize,
     tx: &mpsc::Sender<AudioChunk>,
+    sample_pos: &AtomicU64,
 ) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SAMPLE_POS: AtomicU64 = AtomicU64::new(0);
 
     // Convert to mono
     let mono: Vec<i16> = if channels > 1 {
@@ -365,7 +371,7 @@ fn capture_callback(
     };
 
     // Accumulate into chunks
-    let mut pos = SAMPLE_POS.load(Ordering::Relaxed);
+    let mut pos = sample_pos.load(Ordering::Relaxed);
     for chunk in resampled.chunks(chunk_size) {
         if chunk.len() < chunk_size {
             // Partial chunk — pad with zeros
@@ -396,7 +402,7 @@ fn capture_callback(
             }
         }
     }
-    SAMPLE_POS.store(pos, Ordering::Relaxed);
+    sample_pos.store(pos, Ordering::Relaxed);
 }
 
 /// Capture callback for f32 input samples.
@@ -407,9 +413,8 @@ fn capture_callback_f32(
     target_rate: u32,
     chunk_size: usize,
     tx: &mpsc::Sender<AudioChunk>,
+    sample_pos: &AtomicU64,
 ) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SAMPLE_POS: AtomicU64 = AtomicU64::new(0);
 
     // Convert f32 to i16 mono
     let mono: Vec<i16> = if channels > 1 {
@@ -439,7 +444,7 @@ fn capture_callback_f32(
     };
 
     // Accumulate into chunks
-    let mut pos = SAMPLE_POS.load(Ordering::Relaxed);
+    let mut pos = sample_pos.load(Ordering::Relaxed);
     for chunk in resampled.chunks(chunk_size) {
         if chunk.len() < chunk_size {
             let mut padded = chunk.to_vec();
@@ -469,7 +474,7 @@ fn capture_callback_f32(
             }
         }
     }
-    SAMPLE_POS.store(pos, Ordering::Relaxed);
+    sample_pos.store(pos, Ordering::Relaxed);
 }
 
 /// Convert f32 sample to i16 with clamping.
