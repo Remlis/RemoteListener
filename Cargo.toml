@@ -36,6 +36,7 @@ rcgen = "0.14"
 
 # TLS
 rustls = "0.23"
+rustls-native-certs = "0.8"
 tokio-rustls = "0.26"
 
 # QUIC

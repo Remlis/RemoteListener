@@ -12,6 +12,7 @@
 
 use std::io::{self, Read};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -324,6 +325,29 @@ pub async fn fetch_relay_pool() -> Result<Vec<RelayInfo>, RelayError> {
     Ok(resp.relays)
 }
 
+/// Connect to a relay server with TLS and ALPN "bep-relay".
+async fn connect_tls_relay(
+    relay_addr: SocketAddr,
+) -> Result<tokio_rustls::client::TlsStream<TcpStream>, RelayError> {
+    let tls_config = rl_net::tls::build_relay_client_config()
+        .map_err(|e| RelayError::Io(io::Error::other(e.to_string())))?;
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_config));
+
+    let tcp_stream = TcpStream::connect(relay_addr)
+        .await
+        .map_err(RelayError::Io)?;
+
+    let domain = rustls::pki_types::ServerName::try_from(relay_addr.ip().to_string())
+        .map_err(|e| RelayError::Io(io::Error::new(io::ErrorKind::InvalidInput, e.to_string())))?;
+
+    connector.connect(domain, tcp_stream).await.map_err(|e| {
+        RelayError::Io(io::Error::other(format!(
+            "TLS handshake failed: {}",
+            e
+        )))
+    })
+}
+
 /// Join a relay as a "server" (waiting for incoming connections).
 ///
 /// Returns when a peer connects through the relay, providing
@@ -333,10 +357,8 @@ pub async fn join_relay(
     _device_id: &[u8],
     _token: &str,
 ) -> Result<RelaySession, RelayError> {
-    // Connect to relay via TCP (TODO: add TLS with ALPN "bep-relay")
-    let mut stream = TcpStream::connect(relay_addr)
-        .await
-        .map_err(RelayError::Io)?;
+    // Connect to relay via TLS with ALPN "bep-relay"
+    let mut stream = connect_tls_relay(relay_addr).await?;
 
     tracing::info!("Connected to relay {}", relay_addr);
 
@@ -471,10 +493,8 @@ pub async fn connect_via_relay(
     target_device_id: &[u8],
     _token: &str,
 ) -> Result<RelaySession, RelayError> {
-    // Connect to relay via TCP (TODO: add TLS with ALPN "bep-relay")
-    let mut stream = TcpStream::connect(relay_addr)
-        .await
-        .map_err(RelayError::Io)?;
+    // Connect to relay via TLS with ALPN "bep-relay"
+    let mut stream = connect_tls_relay(relay_addr).await?;
 
     tracing::info!("Connected to relay {}", relay_addr);
 
@@ -573,8 +593,8 @@ pub async fn connect_via_relay(
     }
 }
 
-/// Read a relay message from an async TCP stream.
-async fn read_message(stream: &mut TcpStream) -> Result<RelayMessage, RelayError> {
+/// Read a relay message from an async stream.
+async fn read_message<S: AsyncReadExt + Unpin>(stream: &mut S) -> Result<RelayMessage, RelayError> {
     // Read header
     let mut header = [0u8; 12];
     stream

@@ -3497,6 +3497,7 @@ dependencies = [
  "rcgen",
  "rl-core",
  "rustls",
+ "rustls-native-certs",
  "sha2",
  "thiserror 2.0.18",
  "tokio",

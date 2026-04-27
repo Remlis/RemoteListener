@@ -221,6 +221,32 @@ pub fn build_client_config(
     Ok(config)
 }
 
+/// Build a [`rustls::ClientConfig`] for connecting to a Syncthing relay server.
+///
+/// - Uses standard WebPKI certificate verification (relay servers use valid CAs)
+/// - Sets ALPN to `bep-relay` per the Syncthing relay protocol
+pub fn build_relay_client_config() -> Result<rustls::ClientConfig, TlsError> {
+    ensure_crypto_provider();
+
+    let mut root_store = rustls::RootCertStore::empty();
+    let native_certs = rustls_native_certs::load_native_certs();
+    if !native_certs.errors.is_empty() {
+        tracing::warn!("Errors loading native certs: {:?}", native_certs.errors);
+    }
+    for cert in native_certs.certs {
+        root_store.add(cert).ok(); // skip invalid certs
+    }
+
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    let mut config = config;
+    config.alpn_protocols = vec![b"bep-relay".to_vec()];
+
+    Ok(config)
+}
+
 // ---------------------------------------------------------------------------
 // Error type
 // ---------------------------------------------------------------------------
