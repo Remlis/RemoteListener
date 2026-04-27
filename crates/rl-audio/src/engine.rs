@@ -40,7 +40,7 @@ impl AudioEngine {
         device_name: String,
         bitrate: Bitrate,
     ) -> Result<(), AudioError> {
-        let input = Box::new(CpalInput::new()?); // TODO: select specific device
+        let input = Box::new(CpalInput::with_device_uid(device_uid)?);
         let channel = AudioChannel::with_input(
             channel_id.clone(),
             device_name,

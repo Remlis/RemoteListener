@@ -2,7 +2,7 @@
 
 use std::sync::mpsc;
 
-use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 /// A chunk of raw PCM audio samples (i16 mono, 48kHz).
 #[derive(Debug, Clone)]
@@ -99,11 +99,11 @@ impl AudioInput for SineWaveInput {
 
 /// cpal-based real audio input.
 pub struct CpalInput {
-    #[allow(dead_code)]
+    device: Option<cpal::Device>,
     device_name: String,
-    #[allow(dead_code)]
     device_uid: String,
     stream: Option<cpal::Stream>,
+    sample_rate: u32,
 }
 
 impl CpalInput {
@@ -121,18 +121,181 @@ impl CpalInput {
             .map(|id| id.1.clone())
             .unwrap_or_else(|_| "unknown".into());
 
+        let sample_rate = device
+            .default_input_config()
+            .map(|c| c.sample_rate())
+            .unwrap_or(48000);
+
         Ok(Self {
+            device: Some(device),
             device_name: name,
             device_uid: uid,
             stream: None,
+            sample_rate,
         })
+    }
+
+    /// Create a cpal input targeting a specific device by UID.
+    pub fn with_device_uid(uid: &str) -> Result<Self, AudioError> {
+        let host = cpal::default_host();
+        let default = host.default_input_device();
+
+        let device = host
+            .input_devices()
+            .map_err(|_| AudioError::NoDevice)?
+            .find(|d| d.id().map(|id| id.1 == uid).unwrap_or(false))
+            .ok_or(AudioError::NoDevice)?;
+
+        let name = device
+            .description()
+            .map(|d| d.to_string())
+            .unwrap_or_else(|_| "Unknown".into());
+
+        let _is_default = default
+            .as_ref()
+            .map(|def| def.id().map(|did| did.1 == uid).unwrap_or(false))
+            .unwrap_or(false);
+
+        let sample_rate = device
+            .default_input_config()
+            .map(|c| c.sample_rate())
+            .unwrap_or(48000);
+
+        Ok(Self {
+            device: Some(device),
+            device_name: name,
+            device_uid: uid.to_string(),
+            stream: None,
+            sample_rate,
+        })
+    }
+
+    /// The device name.
+    pub fn device_name(&self) -> &str {
+        &self.device_name
+    }
+
+    /// The device UID.
+    pub fn device_uid(&self) -> &str {
+        &self.device_uid
+    }
+
+    /// Find a supported config close to 48kHz mono i16.
+    fn find_config(
+        device: &cpal::Device,
+    ) -> Result<(cpal::StreamConfig, cpal::SampleFormat, u32), AudioError> {
+        let supported = device
+            .supported_input_configs()
+            .map_err(|_| AudioError::NoConfig)?;
+
+        let target_rate: cpal::SampleRate = 48000;
+        let mut best: Option<(cpal::StreamConfig, cpal::SampleFormat, u32)> = None;
+
+        for cfg in supported {
+            if cfg.channels() > 2 {
+                continue;
+            }
+            let min = cfg.min_sample_rate();
+            let max = cfg.max_sample_rate();
+            let rate: cpal::SampleRate = if min <= target_rate && target_rate <= max {
+                48000
+            } else {
+                // Pick the closest available rate
+                let min_dist = (min as i64 - 48000).unsigned_abs();
+                let max_dist = (max as i64 - 48000).unsigned_abs();
+                if min_dist < max_dist {
+                    min
+                } else {
+                    max
+                }
+            };
+
+            let config = cpal::StreamConfig {
+                channels: cfg.channels().min(2),
+                sample_rate: rate,
+                buffer_size: cpal::BufferSize::Default,
+            };
+
+            // Prefer i16, then f32
+            match cfg.sample_format() {
+                cpal::SampleFormat::I16 => {
+                    return Ok((config, cpal::SampleFormat::I16, rate));
+                }
+                cpal::SampleFormat::F32 => {
+                    if best.is_none() || best.as_ref().unwrap().1 != cpal::SampleFormat::I16 {
+                        best = Some((config, cpal::SampleFormat::F32, rate));
+                    }
+                }
+                _ => continue,
+            }
+        }
+
+        best.ok_or(AudioError::NoConfig)
     }
 }
 
 impl AudioInput for CpalInput {
     fn start(&mut self) -> Result<mpsc::Receiver<AudioChunk>, AudioError> {
-        // Full cpal streaming will be wired up in the transmitter
-        Err(AudioError::CaptureFailed)
+        let device = self.device.take().ok_or(AudioError::NoDevice)?;
+        let (config, sample_format, native_rate) = Self::find_config(&device)?;
+        let channels = config.channels;
+        let target_rate = 48000u32;
+        let chunk_size = 960usize; // 20ms at 48kHz mono
+
+        let (tx, rx) = mpsc::channel();
+
+        let err_tx = tx.clone();
+
+        let stream = match sample_format {
+            cpal::SampleFormat::I16 => device.build_input_stream::<i16, _, _>(
+                &config,
+                move |data: &[i16], _info: &cpal::InputCallbackInfo| {
+                    capture_callback(data, channels, native_rate, target_rate, chunk_size, &tx);
+                },
+                move |err| {
+                    tracing::error!("Audio capture error: {}", err);
+                    let _ = err_tx.send(AudioChunk {
+                        samples: vec![],
+                        timestamp_us: 0,
+                    });
+                },
+                None,
+            ),
+            cpal::SampleFormat::F32 => device.build_input_stream::<f32, _, _>(
+                &config,
+                move |data: &[f32], _info: &cpal::InputCallbackInfo| {
+                    capture_callback_f32(data, channels, native_rate, target_rate, chunk_size, &tx);
+                },
+                move |err| {
+                    tracing::error!("Audio capture error: {}", err);
+                    let _ = err_tx.send(AudioChunk {
+                        samples: vec![],
+                        timestamp_us: 0,
+                    });
+                },
+                None,
+            ),
+            _ => return Err(AudioError::NoConfig),
+        }
+        .map_err(|e| {
+            tracing::error!("Failed to build input stream: {}", e);
+            // Put device back so it can be retried
+            self.device = Some(device);
+            AudioError::CaptureFailed
+        })?;
+
+        stream.play().map_err(|e| {
+            tracing::error!("Failed to start input stream: {}", e);
+            AudioError::CaptureFailed
+        })?;
+
+        self.stream = Some(stream);
+        // Keep the device reference so we can restart later
+        // (cpal consumes the device on build_input_stream, but we can
+        // re-acquire via with_device_uid or new on restart)
+        self.sample_rate = native_rate;
+
+        Ok(rx)
     }
 
     fn stop(&mut self) {
@@ -161,6 +324,158 @@ impl AudioInput for CpalInput {
             .collect();
         Ok(devices)
     }
+}
+
+/// Capture callback for i16 input samples.
+fn capture_callback(
+    data: &[i16],
+    channels: u16,
+    native_rate: u32,
+    target_rate: u32,
+    chunk_size: usize,
+    tx: &mpsc::Sender<AudioChunk>,
+) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SAMPLE_POS: AtomicU64 = AtomicU64::new(0);
+
+    // Convert to mono
+    let mono: Vec<i16> = if channels > 1 {
+        data.chunks(channels as usize)
+            .map(|frame| {
+                let sum: i64 = frame.iter().map(|&s| s as i64).sum();
+                (sum / frame.len() as i64) as i16
+            })
+            .collect()
+    } else {
+        data.to_vec()
+    };
+
+    // Simple linear resampling if native rate != 48kHz
+    let resampled: Vec<i16> = if native_rate != target_rate {
+        let ratio = native_rate as f64 / target_rate as f64;
+        let out_len = (mono.len() as f64 / ratio) as usize;
+        (0..out_len)
+            .map(|i| {
+                let src_idx = (i as f64 * ratio) as usize;
+                mono[src_idx.min(mono.len() - 1)]
+            })
+            .collect()
+    } else {
+        mono
+    };
+
+    // Accumulate into chunks
+    let mut pos = SAMPLE_POS.load(Ordering::Relaxed);
+    for chunk in resampled.chunks(chunk_size) {
+        if chunk.len() < chunk_size {
+            // Partial chunk — pad with zeros
+            let mut padded = chunk.to_vec();
+            padded.resize(chunk_size, 0);
+            let ts = (pos * 1_000_000) / target_rate as u64;
+            pos += chunk_size as u64;
+            if tx
+                .send(AudioChunk {
+                    samples: padded,
+                    timestamp_us: ts,
+                })
+                .is_err()
+            {
+                break;
+            }
+        } else {
+            let ts = (pos * 1_000_000) / target_rate as u64;
+            pos += chunk_size as u64;
+            if tx
+                .send(AudioChunk {
+                    samples: chunk.to_vec(),
+                    timestamp_us: ts,
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
+    }
+    SAMPLE_POS.store(pos, Ordering::Relaxed);
+}
+
+/// Capture callback for f32 input samples.
+fn capture_callback_f32(
+    data: &[f32],
+    channels: u16,
+    native_rate: u32,
+    target_rate: u32,
+    chunk_size: usize,
+    tx: &mpsc::Sender<AudioChunk>,
+) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SAMPLE_POS: AtomicU64 = AtomicU64::new(0);
+
+    // Convert f32 to i16 mono
+    let mono: Vec<i16> = if channels > 1 {
+        data.chunks(channels as usize)
+            .map(|frame| {
+                let sum: f64 = frame.iter().map(|&s| s as f64).sum();
+                let avg = sum / frame.len() as f64;
+                f32_to_i16(avg as f32)
+            })
+            .collect()
+    } else {
+        data.iter().map(|&s| f32_to_i16(s)).collect()
+    };
+
+    // Simple linear resampling if native rate != 48kHz
+    let resampled: Vec<i16> = if native_rate != target_rate {
+        let ratio = native_rate as f64 / target_rate as f64;
+        let out_len = (mono.len() as f64 / ratio) as usize;
+        (0..out_len)
+            .map(|i| {
+                let src_idx = (i as f64 * ratio) as usize;
+                mono[src_idx.min(mono.len() - 1)]
+            })
+            .collect()
+    } else {
+        mono
+    };
+
+    // Accumulate into chunks
+    let mut pos = SAMPLE_POS.load(Ordering::Relaxed);
+    for chunk in resampled.chunks(chunk_size) {
+        if chunk.len() < chunk_size {
+            let mut padded = chunk.to_vec();
+            padded.resize(chunk_size, 0);
+            let ts = (pos * 1_000_000) / target_rate as u64;
+            pos += chunk_size as u64;
+            if tx
+                .send(AudioChunk {
+                    samples: padded,
+                    timestamp_us: ts,
+                })
+                .is_err()
+            {
+                break;
+            }
+        } else {
+            let ts = (pos * 1_000_000) / target_rate as u64;
+            pos += chunk_size as u64;
+            if tx
+                .send(AudioChunk {
+                    samples: chunk.to_vec(),
+                    timestamp_us: ts,
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
+    }
+    SAMPLE_POS.store(pos, Ordering::Relaxed);
+}
+
+/// Convert f32 sample to i16 with clamping.
+fn f32_to_i16(s: f32) -> i16 {
+    let clamped = s.clamp(-1.0, 1.0);
+    (clamped * i16::MAX as f32) as i16
 }
 
 #[derive(Debug, thiserror::Error)]
