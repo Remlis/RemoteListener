@@ -6,6 +6,7 @@ use crate::capture::{AudioError, AudioInput, CpalInput, DeviceInfo};
 use crate::channel::AudioChannel;
 use crate::encoder::Bitrate;
 use rl_core::proto::ChannelInfo;
+use rl_crypto::key::KeyPair;
 
 /// Multi-channel audio engine.
 pub struct AudioEngine {
@@ -100,6 +101,14 @@ impl AudioEngine {
             .values()
             .map(|ch| ch.to_channel_info())
             .collect()
+    }
+
+    /// Set the keypair on all channels (for recording encryption).
+    pub fn set_keypair(&mut self, keypair: &KeyPair) {
+        let secret = keypair.secret_bytes();
+        for ch in self.channels.values_mut() {
+            ch.set_keypair(KeyPair::from_bytes(secret));
+        }
     }
 }
 

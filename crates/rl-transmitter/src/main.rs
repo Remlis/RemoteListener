@@ -2,6 +2,7 @@
 
 use rl_core::config::Config;
 use rl_discovery::{Announcement, DiscoveryClient};
+use rl_tray::TrayCommand;
 use rl_transmitter::discovery::DiscoveryService;
 use rl_transmitter::server::run_server;
 use rl_transmitter::upnp;
@@ -127,12 +128,102 @@ async fn main() {
 
     // Start the TLS server
     let server_addr = std::net::SocketAddr::from(([0, 0, 0, 0], components.listen_port));
+    let state = components.state.clone();
+    let relay_tls_acceptor = components.tls_acceptor.clone();
+    let relay_url = components.config.relay_url.clone();
     tokio::spawn(run_server(
         server_addr,
         components.state,
         components.device_id,
         components.tls_acceptor,
     ));
+
+    // Start system tray
+    let tray_sender = match rl_tray::run_tray() {
+        Ok(sender) => {
+            println!("System tray started.");
+            Some(sender)
+        }
+        Err(e) => {
+            tracing::warn!("System tray not available: {}", e);
+            None
+        }
+    };
+
+    // Periodic tray status update
+    let tray_device_id = device_id_str.clone();
+    let tray_state = state.clone();
+    if let Some(sender) = tray_sender.clone() {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+            loop {
+                interval.tick().await;
+                let mut status = tray_state.tray_status().await;
+                status.device_id = tray_device_id.clone();
+                if sender.send(TrayCommand::UpdateStatus(status)).is_err() {
+                    break; // Tray closed
+                }
+            }
+        });
+    }
+
+    // Start relay connection if configured
+    if !relay_url.is_empty() {
+        let relay_state = state.clone();
+        let relay_device_id = device_id_str.clone();
+        tokio::spawn(async move {
+            loop {
+                match parse_relay_url(&relay_url) {
+                    Some(addr) => {
+                        tracing::info!("Connecting to relay {}", addr);
+                        match rl_transmitter::relay::join_relay(
+                            addr,
+                            relay_device_id.as_bytes(),
+                            "",
+                        )
+                        .await
+                        {
+                            Ok(session) => {
+                                tracing::info!(
+                                    "Relay session established with {:02x?}...",
+                                    &session.remote_device_id[..8.min(session.remote_device_id.len())]
+                                );
+                                // Wrap the raw TCP stream in TLS (as server)
+                                let tls_stream =
+                                    match relay_tls_acceptor.accept(session.stream).await {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            tracing::error!("Relay TLS handshake failed: {}", e);
+                                            continue;
+                                        }
+                                    };
+                                // Handle as a normal connection
+                                if let Err(e) =
+                                    rl_transmitter::server::handle_relay_connection(
+                                        tls_stream,
+                                        relay_state.clone(),
+                                        relay_device_id.clone(),
+                                    )
+                                    .await
+                                {
+                                    tracing::error!("Relay connection error: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Relay connection failed: {}", e);
+                            }
+                        }
+                    }
+                    None => {
+                        tracing::error!("Invalid relay URL: {}", relay_url);
+                        break;
+                    }
+                }
+                // Reconnect after delay
+                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            }
+        });
+    }
 
     tokio::signal::ctrl_c().await.unwrap();
     println!("Shutting down.");
@@ -155,4 +246,13 @@ async fn main() {
     if let Err(e) = discovery.stop() {
         tracing::warn!("mDNS shutdown error: {}", e);
     }
+}
+
+/// Parse "relay://host:port" into a SocketAddr.
+fn parse_relay_url(url: &str) -> Option<std::net::SocketAddr> {
+    let url = url.strip_prefix("relay://")?;
+    let (host, port_str) = url.rsplit_once(':')?;
+    let port: u16 = port_str.parse().ok()?;
+    let addr: std::net::IpAddr = host.parse().ok()?;
+    Some(std::net::SocketAddr::new(addr, port))
 }

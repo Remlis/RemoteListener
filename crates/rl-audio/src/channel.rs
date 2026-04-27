@@ -4,6 +4,8 @@ use crate::capture::{AudioError, AudioInput, SineWaveInput};
 use crate::encoder::{Bitrate, OpusEncoder};
 use crate::recorder::RecordingWriter;
 use rl_core::proto::ChannelInfo;
+use rl_crypto::format::RecordingFileBuilder;
+use rl_crypto::key::KeyPair;
 use std::path::PathBuf;
 
 /// A single audio channel with independent recording state.
@@ -19,6 +21,7 @@ pub struct AudioChannel {
     input: Box<dyn AudioInput>,
     encoder: OpusEncoder,
     recorder: Option<RecordingWriter>,
+    keypair: Option<KeyPair>,
 }
 
 impl AudioChannel {
@@ -42,6 +45,7 @@ impl AudioChannel {
             input,
             encoder,
             recorder: None,
+            keypair: None,
         })
     }
 
@@ -65,6 +69,7 @@ impl AudioChannel {
             input,
             encoder,
             recorder: None,
+            keypair: None,
         })
     }
 
@@ -75,10 +80,41 @@ impl AudioChannel {
         Ok(())
     }
 
-    /// Stop recording.
-    pub fn stop_recording(&mut self) {
+    /// Stop recording and finalize the file.
+    pub fn stop_recording(&mut self) -> Result<Option<std::path::PathBuf>, AudioError> {
         self.recording_enabled = false;
-        self.recorder = None;
+        if let Some(writer) = self.recorder.take() {
+            // Build the RecordingFileBuilder with paired receiver keys
+            if let Some(ref kp) = self.keypair {
+                let mut builder = RecordingFileBuilder::new(self.channel_id.clone())
+                    .with_sender_public_key(*kp.public_key().as_bytes());
+                // Add self as a receiver (so the transmitter can decrypt its own recordings)
+                let self_kek = kp.diffie_hellman(kp.public_key()).derive_kek(b"rl-keks/v1");
+                builder = builder.add_receiver(&self_kek, kp.fingerprint()).map_err(|e| {
+                    AudioError::Opus(format!("Failed to add receiver: {}", e))
+                })?;
+                // TODO: Add paired receivers' key entries when public keys are available
+
+                let result = writer.finalize(builder).map_err(|e| {
+                    AudioError::Opus(format!("Failed to finalize recording: {}", e))
+                })?;
+                Ok(Some(result))
+            } else {
+                // No keypair set — discard the recording
+                tracing::warn!(
+                    "Discarding recording for {}: no keypair configured",
+                    self.channel_id
+                );
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Set the keypair for encrypting recordings.
+    pub fn set_keypair(&mut self, keypair: KeyPair) {
+        self.keypair = Some(keypair);
     }
 
     /// Set the bitrate.
@@ -99,6 +135,23 @@ impl AudioChannel {
         }
         self.recorded_bytes += data.len() as u64;
         Ok(data)
+    }
+
+    /// Write already-encoded Opus frames to the recording writer.
+    /// Returns true if frames were written.
+    pub fn write_opus_frames(&mut self, opus_frames: &[Vec<u8>]) -> bool {
+        if !self.recording_enabled {
+            return false;
+        }
+        if let Some(ref mut writer) = self.recorder {
+            for frame in opus_frames {
+                writer.write_chunk(&(frame.len() as u32).to_be_bytes());
+                writer.write_chunk(frame);
+            }
+            true
+        } else {
+            false
+        }
     }
 
     /// Encode PCM to Opus frames.
@@ -129,7 +182,6 @@ impl AudioChannel {
 mod tests {
     use super::*;
     use crate::decoder::OpusDecoder;
-    use aes_gcm::KeyInit;
     use rl_crypto::format::RecordingFileBuilder;
     use rl_crypto::key::KeyPair;
 
@@ -189,7 +241,7 @@ mod tests {
 
         // Decrypt
         let kek_rx = rx.diffie_hellman(tx.public_key()).derive_kek(b"rl-keks/v1");
-        let decrypted =
+        let _decrypted =
             rl_crypto::decrypt::decrypt_recording(&parsed, &rx.fingerprint(), &kek_rx).unwrap();
 
         // Decode back to PCM

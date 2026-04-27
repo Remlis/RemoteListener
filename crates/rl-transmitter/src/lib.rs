@@ -71,8 +71,11 @@ impl Transmitter {
         )?;
         let tls_acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
 
+        let mut engine = self.engine;
+        engine.set_keypair(&self.keypair);
+
         let state = Arc::new(server::TransmitterState::new(
-            Arc::new(tokio::sync::Mutex::new(self.engine)),
+            Arc::new(tokio::sync::Mutex::new(engine)),
             self.config.device_name.clone(),
             self.keypair,
             self.config.recording_dir.clone(),

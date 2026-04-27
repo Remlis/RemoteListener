@@ -2,8 +2,11 @@
 //!
 //! ```text
 //! [magic 4B][version 1B][channel_id_len 2B][channel_id][num_key_entries 2B]
-//! [key_entry_1][key_entry_2]...[nonce 12B][segment_count 4B][encrypted_data...]
+//! [key_entry_1][key_entry_2]...[sender_key_present 1B][sender_public_key 32B]
+//! [nonce 12B][segment_count 4B][encrypted_data...]
 //! ```
+//!
+//! Version 1 files don't have sender_public_key. Version 2+ includes it.
 //!
 //! Key entry:
 //! ```text
@@ -19,7 +22,10 @@ use sha2::{Digest, Sha256};
 pub const MAGIC: [u8; 4] = [b'R', b'L', b'R', b'F'];
 
 /// Current format version.
-pub const FORMAT_VERSION: u8 = 1;
+pub const FORMAT_VERSION: u8 = 2;
+
+/// Version 1 (no sender public key).
+const FORMAT_VERSION_V1: u8 = 1;
 
 /// Size of a wrapped DEK entry: 12 (nonce) + 32 (ciphertext) + 16 (tag) = 60 bytes.
 pub const WRAPPED_DEK_SIZE: usize = 60;
@@ -85,6 +91,8 @@ pub struct RecordingHeader {
     pub channel_id: String,
     /// Key entries — one per authorized receiver.
     pub key_entries: Vec<KeyEntry>,
+    /// Sender's X25519 public key (for ECDH by receivers).
+    pub sender_public_key: Option<[u8; 32]>,
     /// Nonce used for the first segment (12 bytes).
     pub nonce: [u8; 12],
     /// Number of encrypted segments.
@@ -111,6 +119,7 @@ pub struct RecordingFile {
 pub struct RecordingFileBuilder {
     channel_id: String,
     key_entries: Vec<KeyEntry>,
+    sender_public_key: Option<[u8; 32]>,
     dek: [u8; 32],
     nonce: [u8; 12],
 }
@@ -123,6 +132,7 @@ impl RecordingFileBuilder {
         Self {
             channel_id,
             key_entries: Vec::new(),
+            sender_public_key: None,
             dek: encrypt::generate_dek(),
             nonce,
         }
@@ -135,9 +145,16 @@ impl RecordingFileBuilder {
         Self {
             channel_id,
             key_entries: Vec::new(),
+            sender_public_key: None,
             dek,
             nonce,
         }
+    }
+
+    /// Set the sender's X25519 public key (for ECDH by receivers).
+    pub fn with_sender_public_key(mut self, public_key: [u8; 32]) -> Self {
+        self.sender_public_key = Some(public_key);
+        self
     }
 
     /// Add a key entry for a receiver (wraps the DEK with the receiver's KEK).
@@ -171,6 +188,7 @@ impl RecordingFileBuilder {
             header: RecordingHeader {
                 channel_id: self.channel_id,
                 key_entries: self.key_entries,
+                sender_public_key: self.sender_public_key,
                 nonce: self.nonce,
                 segment_count,
             },
@@ -203,6 +221,14 @@ impl RecordingFile {
             buf.extend_from_slice(&entry.to_bytes());
         }
 
+        // Sender public key (1 byte present flag + 32 bytes if present)
+        if let Some(ref pk) = self.header.sender_public_key {
+            buf.push(1);
+            buf.extend_from_slice(pk);
+        } else {
+            buf.push(0);
+        }
+
         // Nonce
         buf.extend_from_slice(&self.header.nonce);
 
@@ -230,7 +256,7 @@ impl RecordingFile {
             return Err(FormatError::Truncated);
         }
         let version = data[pos];
-        if version != FORMAT_VERSION {
+        if version > FORMAT_VERSION {
             return Err(FormatError::UnsupportedVersion(version));
         }
         pos += 1;
@@ -266,6 +292,28 @@ impl RecordingFile {
             pos += 92;
         }
 
+        // Sender public key (v2+ only: present flag + 32 bytes)
+        let sender_public_key = if version > FORMAT_VERSION_V1 {
+            if data.len() <= pos {
+                return Err(FormatError::Truncated);
+            }
+            let present = data[pos];
+            pos += 1;
+            if present != 0 {
+                if data.len() < pos + 32 {
+                    return Err(FormatError::Truncated);
+                }
+                let mut pk = [0u8; 32];
+                pk.copy_from_slice(&data[pos..pos + 32]);
+                pos += 32;
+                Some(pk)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Nonce
         if data.len() < pos + 12 {
             return Err(FormatError::Truncated);
@@ -289,6 +337,7 @@ impl RecordingFile {
             header: RecordingHeader {
                 channel_id,
                 key_entries,
+                sender_public_key,
                 nonce,
                 segment_count,
             },

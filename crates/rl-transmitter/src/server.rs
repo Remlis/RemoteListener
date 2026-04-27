@@ -154,6 +154,9 @@ pub struct TransmitterState {
     connections: Mutex<ConnectionManager>,
     /// Maximum number of concurrent connections.
     max_connections: usize,
+    /// Broadcast channel for pushing DeviceStatus updates to all connections.
+    /// The sender ID (ConnectionId) is included so each connection can skip its own updates.
+    status_push: broadcast::Sender<(ConnectionId, Vec<u8>)>,
 }
 
 impl TransmitterState {
@@ -171,6 +174,7 @@ impl TransmitterState {
             audio_senders: Mutex::new(HashMap::new()),
             connections: Mutex::new(ConnectionManager::new()),
             max_connections: 32,
+            status_push: broadcast::channel(16).0,
         }
     }
 
@@ -217,6 +221,56 @@ impl TransmitterState {
                 senders.remove(channel_id);
             }
         }
+    }
+
+    /// Subscribe to status push notifications.
+    pub fn subscribe_status(&self) -> broadcast::Receiver<(ConnectionId, Vec<u8>)> {
+        self.status_push.subscribe()
+    }
+
+    /// Collect current status for the system tray.
+    pub async fn tray_status(&self) -> rl_tray::TrayStatus {
+        let engine = self.engine.lock().await;
+        let channel_count = engine.channel_count();
+        let recording_channels = engine.channels().iter().filter(|ch| ch.recording_enabled).count();
+        drop(engine);
+
+        let connected_receivers = {
+            let mgr = self.connections.lock().await;
+            mgr.connection_count()
+        };
+
+        rl_tray::TrayStatus {
+            device_id: String::new(), // Filled by caller
+            device_name: self.device_name.clone(),
+            channel_count,
+            recording_channels,
+            connected_receivers,
+        }
+    }
+
+    /// Push a DeviceStatus frame to all connections except the originating one.
+    pub async fn push_status(&self, origin_conn_id: ConnectionId) {
+        let engine = self.engine.lock().await;
+        let channels = engine.channel_infos();
+        drop(engine);
+
+        let storage = compute_storage_info(&self.recording_dir);
+        let start_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        // Approximate uptime — we don't track exact start time here
+        let status_frame = Connection::create_device_status(
+            &self.device_name,
+            channels,
+            Some(storage),
+            start_time,
+        );
+
+        let _ = self
+            .status_push
+            .send((origin_conn_id, status_frame));
     }
 }
 
@@ -305,48 +359,102 @@ async fn handle_connection(
         id
     };
 
+    // Subscribe to status push notifications (DeviceStatus from other connections)
+    let mut status_rx = state.subscribe_status();
+    let status_writer = writer.clone();
+    let status_conn_id = conn_id;
+    let status_handle = tokio::spawn(async move {
+        loop {
+            match status_rx.recv().await {
+                Ok((origin_conn_id, frame)) => {
+                    // Skip our own updates
+                    if origin_conn_id == status_conn_id {
+                        continue;
+                    }
+                    let mut w = status_writer.lock().await;
+                    if w.write_all(&frame).await.is_err() {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("Status push lagged {} frames", n);
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    });
+
     let mut read_buf = Vec::new();
     let mut tmp = [0u8; 65536];
+    let mut missed_pings: u32 = 0;
+    const MAX_MISSED_PINGS: u32 = 3;
+    let mut heartbeat = tokio::time::interval(tokio::time::Duration::from_secs(30));
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
-        let n = reader.read(&mut tmp).await?;
-        if n == 0 {
-            break; // Connection closed
-        }
-        read_buf.extend_from_slice(&tmp[..n]);
+        tokio::select! {
+            result = reader.read(&mut tmp) => {
+                let n = result?;
+                if n == 0 {
+                    break; // Connection closed
+                }
+                // Any received data resets the missed ping counter
+                missed_pings = 0;
+                read_buf.extend_from_slice(&tmp[..n]);
 
-        // Bound read buffer growth to prevent OOM
-        if read_buf.len() > MAX_READ_BUF {
-            tracing::warn!("Read buffer exceeded {} bytes, clearing", MAX_READ_BUF);
-            read_buf.clear();
-            break;
-        }
+                // Bound read buffer growth to prevent OOM
+                if read_buf.len() > MAX_READ_BUF {
+                    tracing::warn!("Read buffer exceeded {} bytes, clearing", MAX_READ_BUF);
+                    read_buf.clear();
+                    break;
+                }
 
-        // Try to decode frames from the buffer
-        while !read_buf.is_empty() {
-            match frame::decode_frame(&read_buf) {
-                Ok(Some((decoded, consumed))) => {
-                    read_buf.drain(..consumed);
-                    let events = conn.handle_frame(&decoded)?;
+                // Try to decode frames from the buffer
+                while !read_buf.is_empty() {
+                    match frame::decode_frame(&read_buf) {
+                        Ok(Some((decoded, consumed))) => {
+                            read_buf.drain(..consumed);
+                            let events = conn.handle_frame(&decoded)?;
 
-                    for event in events {
-                        let responses = handle_event(&event, &state, conn_id, &writer).await;
-                        let mut w = writer.lock().await;
-                        for frame_bytes in responses {
-                            w.write_all(&frame_bytes).await?;
+                            for event in events {
+                                let responses = handle_event(&event, &state, conn_id, &writer).await;
+                                let mut w = writer.lock().await;
+                                for frame_bytes in responses {
+                                    w.write_all(&frame_bytes).await?;
+                                }
+                            }
+                        }
+                        Ok(None) => break, // Need more data
+                        Err(_) => {
+                            read_buf.clear();
+                            break;
                         }
                     }
                 }
-                Ok(None) => break, // Need more data
-                Err(_) => {
-                    read_buf.clear();
+            }
+            _ = heartbeat.tick() => {
+                missed_pings += 1;
+                if missed_pings > MAX_MISSED_PINGS {
+                    tracing::warn!(
+                        "Connection {} missed {} pings, closing",
+                        conn_id, missed_pings
+                    );
                     break;
+                }
+                // Send PING
+                let ping_frame = conn.create_ping();
+                let mut w = writer.lock().await;
+                if w.write_all(&ping_frame).await.is_err() {
+                    break; // Write failed, connection dead
                 }
             }
         }
     }
 
     // Cleanup: remove connection and unsubscribe from all channels
+    status_handle.abort(); // Stop the status push listener
     let unsub_channels = {
         let mut mgr = state.connections.lock().await;
         mgr.remove_connection(conn_id)
@@ -361,6 +469,15 @@ async fn handle_connection(
     );
 
     Ok(())
+}
+
+/// Handle a relay-originated TLS connection (TLS already established).
+pub async fn handle_relay_connection(
+    stream: TlsServerStream,
+    state: Arc<TransmitterState>,
+    device_id: String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    handle_connection(stream, device_id, state, None).await
 }
 
 /// Handle a connection event, returning response frames to send back.
@@ -441,19 +558,9 @@ async fn handle_event(
                 let (resp, channels_changed) = handle_control_command(state, command).await;
                 responses.push(resp);
 
-                // Notify all other connected receivers about state change
+                // Push DeviceStatus to all other connected receivers
                 if channels_changed {
-                    let engine = state.engine.lock().await;
-                    let infos = engine.channel_infos();
-                    let storage = compute_storage_info(&state.recording_dir);
-                    let status_frame = Connection::create_device_status(
-                        &state.device_name,
-                        infos,
-                        Some(storage),
-                        0,
-                    );
-                    // TODO: push status_frame to all other connections
-                    let _ = status_frame;
+                    state.push_status(conn_id).await;
                 }
             } else {
                 responses.push(Connection::create_control_response(false, "Not authorized"));
@@ -595,9 +702,17 @@ fn spawn_capture_task(
                 }
             };
 
-            for frame in opus_frames {
-                if tx.send(frame).is_err() {
+            for frame in &opus_frames {
+                if tx.send(frame.clone()).is_err() {
                     break; // No receivers left
+                }
+            }
+
+            // Write Opus frames to recording if enabled
+            {
+                let mut engine = state.engine.lock().await;
+                if let Some(ch) = engine.get_channel_mut(&channel_id) {
+                    ch.write_opus_frames(&opus_frames);
                 }
             }
         }
@@ -673,7 +788,36 @@ async fn handle_control_command(
             };
             let mut engine = state.engine.lock().await;
             if let Some(ch) = engine.get_channel_mut(&cmd.channel_id) {
-                ch.recording_enabled = enabled;
+                if enabled && !ch.recording_enabled {
+                    // Start recording: create output file
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let filename = format!("{}-{}.rlrec", ch.channel_id, timestamp);
+                    let path = state.recording_dir.join(&filename);
+                    let cid = ch.channel_id.clone();
+                    if let Err(e) = ch.start_recording(path, &cid) {
+                        return (
+                            Connection::create_control_response(
+                                false,
+                                &format!("Failed to start recording: {}", e),
+                            ),
+                            false,
+                        );
+                    }
+                } else if !enabled && ch.recording_enabled {
+                    // Stop recording: finalize the file
+                    match ch.stop_recording() {
+                        Ok(Some(path)) => {
+                            tracing::info!("Recording finalized: {}", path.display());
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::error!("Failed to finalize recording: {}", e);
+                        }
+                    }
+                }
                 (Connection::create_control_response(true, ""), true)
             } else {
                 (
@@ -798,9 +942,9 @@ fn enumerate_recordings(recording_dir: &std::path::Path, channel_id: &str) -> Ve
             continue;
         }
 
-        // Filename format: {channel_id}_{timestamp}.rlrec
+        // Filename format: {channel_id}-{timestamp}.rlrec
         let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        let (file_channel_id, _) = filename.rsplit_once('_').unwrap_or((filename, ""));
+        let (file_channel_id, timestamp_str) = filename.rsplit_once('-').unwrap_or((filename, ""));
 
         if !channel_id.is_empty() && file_channel_id != channel_id {
             continue;
@@ -814,13 +958,29 @@ fn enumerate_recordings(recording_dir: &std::path::Path, channel_id: &str) -> Ve
         let recording_id = filename.to_string();
         let file_size = metadata.len();
 
+        let start_timestamp: u64 = timestamp_str.parse().unwrap_or(0);
+
+        // Use file modification time as end timestamp
+        let end_timestamp = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(start_timestamp);
+
+        let duration_seconds = if end_timestamp > start_timestamp {
+            (end_timestamp - start_timestamp) as u32
+        } else {
+            0
+        };
+
         recordings.push(RecordingInfo {
             recording_id,
             channel_id: file_channel_id.to_string(),
-            start_timestamp: 0,
-            end_timestamp: 0,
+            start_timestamp,
+            end_timestamp,
             file_size,
-            duration_seconds: 0,
+            duration_seconds,
         });
     }
 

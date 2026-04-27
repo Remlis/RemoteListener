@@ -128,10 +128,24 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     /// Live audio chunks received from the transmitter.
     public let audioChunkSubject = PassthroughSubject<LiveAudioChunkData, Never>()
 
+    /// Called when a PairResponse is received with the transmitter's public key and fingerprint.
+    public var onPairResponse: ((_ transmitterPublicKey: Data, _ fingerprint: Data) -> Void)?
+
     private var connection: NWConnection?
     private var readBuffer = Data()
     private let readQueue = DispatchQueue(label: "com.rl.receiver.read", qos: .userInitiated)
     private let writeQueue = DispatchQueue(label: "com.rl.receiver.write", qos: .userInitiated)
+
+    /// Whether the last disconnect was initiated by the user (prevents auto-reconnect).
+    private var userInitiatedDisconnect = false
+    /// Current reconnect backoff delay in seconds.
+    private var reconnectDelay: TimeInterval = 1.0
+    /// Maximum reconnect backoff delay.
+    private let maxReconnectDelay: TimeInterval = 60.0
+    /// Heartbeat timer for sending periodic PINGs.
+    private var heartbeatTimer: Timer?
+    /// Time of last received data from the transmitter.
+    private var lastReceivedTime: Date = Date()
 
     public init(host: String, port: UInt16, expectedFingerprint: String? = nil) {
         self.host = host
@@ -191,13 +205,18 @@ public class TransmitterConnection: ObservableObject, Identifiable {
 
         connection?.stateUpdateHandler = { [weak self] newState in
             DispatchQueue.main.async {
+                guard let self = self else { return }
                 switch newState {
                 case .ready:
-                    self?.state = .hello
-                    self?.sendHello()
-                    self?.startReadLoop()
+                    self.state = .hello
+                    self.sendHello()
+                    self.startReadLoop()
                 case .failed, .cancelled:
-                    self?.state = .closed
+                    self.stopHeartbeat()
+                    self.state = .closed
+                    if !self.userInitiatedDisconnect {
+                        self.scheduleReconnect()
+                    }
                 default:
                     break
                 }
@@ -205,11 +224,14 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         }
 
         state = .connecting
+        userInitiatedDisconnect = false
         connection?.start(queue: readQueue)
     }
 
     /// Disconnect from the transmitter.
     public func disconnect() {
+        userInitiatedDisconnect = true
+        stopHeartbeat()
         if state == .ready || state == .hello {
             sendClose(reason: "User disconnect")
         }
@@ -352,16 +374,29 @@ public class TransmitterConnection: ObservableObject, Identifiable {
             if let content = content, !content.isEmpty {
                 self.readBuffer.append(content)
                 self.processReadBuffer()
+                DispatchQueue.main.async { self.lastReceivedTime = Date() }
             }
 
             if let error = error {
                 print("Read error: \(error)")
-                DispatchQueue.main.async { self.state = .closed }
+                DispatchQueue.main.async {
+                    self.stopHeartbeat()
+                    self.state = .closed
+                    if !self.userInitiatedDisconnect {
+                        self.scheduleReconnect()
+                    }
+                }
                 return
             }
 
             if isComplete {
-                DispatchQueue.main.async { self.state = .closed }
+                DispatchQueue.main.async {
+                    self.stopHeartbeat()
+                    self.state = .closed
+                    if !self.userInitiatedDisconnect {
+                        self.scheduleReconnect()
+                    }
+                }
                 return
             }
 
@@ -427,6 +462,8 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         DispatchQueue.main.async {
             self.remoteDeviceName = deviceName
             self.state = .ready
+            self.reconnectDelay = 1.0 // Reset backoff on successful connection
+            self.startHeartbeat()
             // Request channel list after hello
             self.requestChannelList()
         }
@@ -546,8 +583,10 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         // Store the transmitter's public key for future TLS fingerprint verification
         if let pubKey = publicKeyData {
             let fingerprint = SHA256.hash(data: pubKey).compactMap { String(format: "%02x", $0) }.joined()
+            let fingerprintData = Data(SHA256.hash(data: pubKey))
             expectedFingerprint = fingerprint
             print("Paired with transmitter fingerprint: \(fingerprint)")
+            onPairResponse?(pubKey, fingerprintData)
         }
         DispatchQueue.main.async {
             self.isPaired = true
@@ -762,6 +801,49 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         let channelData = data[offset..<endOffset]
         offset = endOffset
         return parseChannelInfo(channelData)
+    }
+
+    // MARK: - Reconnection
+
+    /// Schedule a reconnection attempt with exponential backoff.
+    private func scheduleReconnect() {
+        let delay = reconnectDelay
+        reconnectDelay = min(reconnectDelay * 2, maxReconnectDelay)
+        print("Reconnecting in \(delay)s...")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self = self, !self.userInitiatedDisconnect else { return }
+            self.connect()
+        }
+    }
+
+    // MARK: - Heartbeat
+
+    /// Start the heartbeat timer (sends PING every 30s, closes if no response in 90s).
+    private func startHeartbeat() {
+        stopHeartbeat()
+        lastReceivedTime = Date()
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.sendPing()
+            // Check if we've received any data in the last 90 seconds
+            let elapsed = Date().timeIntervalSince(self.lastReceivedTime)
+            if elapsed > 90.0 {
+                print("Heartbeat timeout: no data received in \(Int(elapsed))s, closing connection")
+                self.stopHeartbeat()
+                self.connection?.cancel()
+                self.connection = nil
+                self.state = .closed
+                if !self.userInitiatedDisconnect {
+                    self.scheduleReconnect()
+                }
+            }
+        }
+    }
+
+    /// Stop the heartbeat timer.
+    private func stopHeartbeat() {
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
     }
 }
 
