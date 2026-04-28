@@ -32,6 +32,8 @@ struct ReceiverInfo {
     device_name: String,
     is_paired: bool,
     fingerprint: Option<Vec<u8>>,
+    /// Receiver's X25519 public key (received in PairRequest).
+    public_key: Option<[u8; 32]>,
     subscribed_channels: HashSet<String>,
 }
 
@@ -68,6 +70,7 @@ impl ConnectionManager {
                 device_name,
                 is_paired: false,
                 fingerprint: None,
+                public_key: None,
                 subscribed_channels: HashSet::new(),
             },
         );
@@ -83,13 +86,39 @@ impl ConnectionManager {
         }
     }
 
-    /// Mark a receiver as paired.
+    /// Mark a receiver as paired by TLS certificate fingerprint.
     pub fn set_paired(&mut self, id: ConnectionId, fingerprint: Vec<u8>) {
         if let Some(info) = self.receivers.get_mut(&id) {
             info.is_paired = true;
             info.fingerprint = Some(fingerprint.clone());
             self.paired_fingerprints.insert(fingerprint);
         }
+    }
+
+    /// Store the receiver's X25519 public key (from PairRequest) for recording encryption.
+    pub fn set_receiver_public_key(&mut self, id: ConnectionId, public_key: [u8; 32]) {
+        if let Some(info) = self.receivers.get_mut(&id) {
+            info.public_key = Some(public_key);
+        }
+    }
+
+    /// Get all paired receivers' (public_key, fingerprint) for recording encryption.
+    /// Only returns receivers that have both a public key and a fingerprint.
+    pub fn paired_public_keys(&self) -> Vec<([u8; 32], Vec<u8>)> {
+        self.receivers
+            .values()
+            .filter(|info| info.is_paired)
+            .filter_map(|info| {
+                let pk = info.public_key?;
+                let fp = info.fingerprint.clone()?;
+                Some((pk, fp))
+            })
+            .collect()
+    }
+
+    /// Get the receiver's public key for a given connection.
+    pub fn receiver_public_key(&self, id: ConnectionId) -> Option<[u8; 32]> {
+        self.receivers.get(&id).and_then(|info| info.public_key)
     }
 
     /// Unpair a receiver by fingerprint.
@@ -148,6 +177,8 @@ pub struct TransmitterState {
     pub keypair: KeyPair,
     /// Directory for encrypted recording files.
     pub recording_dir: std::path::PathBuf,
+    /// Path to the X25519 keypair file (for deletion after pairing).
+    keypair_path: std::path::PathBuf,
     /// Broadcast senders for live audio per channel.
     audio_senders: Mutex<HashMap<String, broadcast::Sender<Vec<u8>>>>,
     /// Connection manager for tracking receivers.
@@ -165,12 +196,19 @@ impl TransmitterState {
         device_name: String,
         keypair: KeyPair,
         recording_dir: std::path::PathBuf,
+        keypair_path: std::path::PathBuf,
     ) -> Self {
+        // Ensure recording directory exists
+        if let Err(e) = std::fs::create_dir_all(&recording_dir) {
+            tracing::warn!("Failed to create recording directory {:?}: {}", recording_dir, e);
+        }
+
         Self {
             engine,
             device_name,
             keypair,
             recording_dir,
+            keypair_path,
             audio_senders: Mutex::new(HashMap::new()),
             connections: Mutex::new(ConnectionManager::new()),
             max_connections: 32,
@@ -415,6 +453,8 @@ async fn handle_connection(
                 while !read_buf.is_empty() {
                     match frame::decode_frame(&read_buf) {
                         Ok(Some((decoded, consumed))) => {
+                            let msg_type = MessageType::try_from(decoded.header.r#type);
+                            tracing::info!("Received frame: type={:?}, body_len={}", msg_type, decoded.body.len());
                             read_buf.drain(..consumed);
                             let events = conn.handle_frame(&decoded)?;
 
@@ -575,11 +615,9 @@ async fn handle_event(
                 <[u8; 32]>::try_from(public_key.as_slice()).unwrap_or([0u8; 32]),
             );
             let receiver_fingerprint = rl_crypto::key::fingerprint(&their_public.to_bytes());
+            let receiver_public_bytes = their_public.to_bytes();
 
             // Respond with our public key and existing fingerprints.
-            // We no longer send the private key over the network.
-            // Instead, each side derives a shared KEK via ECDH for
-            // future encrypted communication.
             let existing_fps = {
                 let mgr = state.connections.lock().await;
                 mgr.paired_fingerprints()
@@ -590,13 +628,26 @@ async fn handle_event(
                 existing_fps,
             ));
 
-            // Store the receiver's fingerprint for this connection
+            // Store the receiver's public key and fingerprint for recording encryption
             let mut mgr = state.connections.lock().await;
             mgr.set_paired(conn_id, receiver_fingerprint);
+            mgr.set_receiver_public_key(conn_id, receiver_public_bytes);
         }
         ConnectionEvent::PairConfirmed { accepted } => {
             if *accepted {
                 tracing::info!("Pairing confirmed for conn {}", conn_id);
+                // Delete the X25519 private key from disk (plan: "发射端磁盘上无私钥")
+                let keypair_path = state.keypair_path.clone();
+                match std::fs::remove_file(&keypair_path) {
+                    Ok(()) => tracing::info!(
+                        "Deleted transmitter private key from {:?}",
+                        keypair_path
+                    ),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        tracing::debug!("Keypair file already deleted");
+                    }
+                    Err(e) => tracing::warn!("Failed to delete keypair file: {}", e),
+                }
             } else {
                 tracing::info!("Pairing rejected for conn {}", conn_id);
             }
@@ -786,6 +837,8 @@ async fn handle_control_command(
                     )
                 }
             };
+            // Get paired receiver public keys outside the engine lock to avoid lock ordering issues
+            let paired = state.connections.lock().await.paired_public_keys();
             let mut engine = state.engine.lock().await;
             if let Some(ch) = engine.get_channel_mut(&cmd.channel_id) {
                 if enabled && !ch.recording_enabled {
@@ -807,8 +860,8 @@ async fn handle_control_command(
                         );
                     }
                 } else if !enabled && ch.recording_enabled {
-                    // Stop recording: finalize the file
-                    match ch.stop_recording() {
+                    // Stop recording: finalize the file with paired receiver keys
+                    match ch.stop_recording(&paired) {
                         Ok(Some(path)) => {
                             tracing::info!("Recording finalized: {}", path.display());
                         }
@@ -1042,11 +1095,36 @@ fn compute_storage_info(recording_dir: &std::path::Path) -> StorageInfo {
         }
     }
 
+    let total_bytes = disk_total_bytes(recording_dir);
+
     StorageInfo {
-        total_bytes: 0, // not easily available cross-platform
+        total_bytes,
         used_bytes,
         recording_count,
     }
+}
+
+/// Get total disk capacity for the filesystem containing the given path.
+#[cfg(unix)]
+fn disk_total_bytes(path: &std::path::Path) -> u64 {
+    let c_path = match std::ffi::CString::new(path.to_str().unwrap_or("")) {
+        Ok(p) => p,
+        Err(_) => return 0,
+    };
+    unsafe {
+        let mut buf = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+        if libc::statvfs(c_path.as_ptr(), buf.as_mut_ptr()) == 0 {
+            let vfs = buf.assume_init();
+            (vfs.f_blocks as u64) * vfs.f_frsize
+        } else {
+            0
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn disk_total_bytes(_path: &std::path::Path) -> u64 {
+    0
 }
 
 /// Delete recordings older than `days` days from the recording directory.

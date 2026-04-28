@@ -9,6 +9,7 @@ rl-crypto = { path = "../rl-crypto" }
 cpal = { workspace = true }
 opus = { workspace = true }
 aes-gcm = { workspace = true }
+x25519-dalek = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 

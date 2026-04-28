@@ -23,7 +23,10 @@ pub struct Transmitter {
     config: Config,
     device_id: DeviceId,
     keypair: KeyPair,
-    certified_key: rcgen::CertifiedKey<rcgen::KeyPair>,
+    /// Original certificate DER (preserved across restarts for stable Device ID).
+    cert_der: Vec<u8>,
+    /// Private signing key DER for TLS.
+    signing_key_der: Vec<u8>,
     engine: AudioEngine,
     #[allow(dead_code)]
     connection: Option<Connection>,
@@ -44,7 +47,7 @@ impl Transmitter {
         // Load or generate Device ID + certificate
         let cert_path = config.effective_cert_path();
         let device_id_path = config.keypair_path.with_extension("device_id");
-        let (device_id, certified_key) =
+        let (device_id, cert_der, signing_key_der) =
             Self::load_or_generate_device_id(&device_id_path, &cert_path)?;
 
         // Load or generate X25519 keypair
@@ -54,7 +57,8 @@ impl Transmitter {
             config,
             device_id,
             keypair,
-            certified_key,
+            cert_der,
+            signing_key_der,
             engine: AudioEngine::new(),
             connection: None,
         })
@@ -62,12 +66,11 @@ impl Transmitter {
 
     /// Consume self and produce the components needed to run the TLS server.
     pub fn into_server_components(self) -> Result<ServerComponents, rl_net::tls::TlsError> {
-        let key_der = self.certified_key.signing_key.serialize_der();
         let server_config = rl_net::tls::build_server_config(
             rustls::pki_types::PrivateKeyDer::from(rustls::pki_types::PrivatePkcs8KeyDer::from(
-                key_der,
+                self.signing_key_der,
             )),
-            self.certified_key.cert.der().to_vec(),
+            self.cert_der,
         )?;
         let tls_acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
 
@@ -79,6 +82,7 @@ impl Transmitter {
             self.config.device_name.clone(),
             self.keypair,
             self.config.recording_dir.clone(),
+            self.config.keypair_path.clone(),
         ));
 
         Ok(ServerComponents {
@@ -105,9 +109,9 @@ impl Transmitter {
         self.keypair.fingerprint()
     }
 
-    /// Get the TLS certified key (cert + signing key).
-    pub fn certified_key(&self) -> &rcgen::CertifiedKey<rcgen::KeyPair> {
-        &self.certified_key
+    /// Get the certificate DER bytes.
+    pub fn cert_der(&self) -> &[u8] {
+        &self.cert_der
     }
 
     /// Add a test sine wave channel.
@@ -152,13 +156,14 @@ impl Transmitter {
         &self.config
     }
 
+    #[allow(clippy::type_complexity)]
     fn load_or_generate_device_id(
         device_id_path: &Path,
         cert_path: &Path,
-    ) -> Result<(DeviceId, rcgen::CertifiedKey<rcgen::KeyPair>), Box<dyn std::error::Error>> {
+    ) -> Result<(DeviceId, Vec<u8>, Vec<u8>), Box<dyn std::error::Error>> {
         let key_path = cert_path.with_extension("key");
 
-        // Try to load existing key from disk
+        // Try to load existing key and cert from disk
         if key_path.exists() && cert_path.exists() {
             let key_pem = std::fs::read_to_string(&key_path).ok();
             let cert_der = std::fs::read(cert_path).ok();
@@ -166,20 +171,10 @@ impl Transmitter {
             if let (Some(key_pem), Some(cert_der)) = (key_pem, cert_der) {
                 if let Ok(key_pair) = rcgen::KeyPair::from_pem(&key_pem) {
                     let id = DeviceId::from_cert_der(&cert_der);
-
-                    // Reconstruct CertifiedKey — we can't parse cert params in
-                    // rcgen 0.14, so create a fresh self-signed cert with the
-                    // same key pair. The Device ID stays stable because it's
-                    // derived from the *original* cert DER we persist.
-                    let params = rcgen::CertificateParams::new(vec!["rl-device".to_string()])?;
-                    let cert = params.self_signed(&key_pair)?;
-                    let certified = rcgen::CertifiedKey {
-                        cert,
-                        signing_key: key_pair,
-                    };
+                    let signing_key_der = key_pair.serialize_der();
 
                     tracing::debug!("Loaded existing certificate from {:?}", cert_path);
-                    return Ok((id, certified));
+                    return Ok((id, cert_der, signing_key_der));
                 }
             }
             // If loading fails, fall through to generate new
@@ -195,15 +190,18 @@ impl Transmitter {
             std::fs::create_dir_all(parent)?;
         }
 
+        let cert_der = certified.cert.der().to_vec();
+        let signing_key_der = certified.signing_key.serialize_der();
+
         // Persist device ID string
         std::fs::write(device_id_path, id.display())?;
 
         // Persist cert DER (for stable Device ID) and key PEM
-        std::fs::write(cert_path, certified.cert.der())?;
+        std::fs::write(cert_path, &cert_der)?;
         std::fs::write(&key_path, certified.signing_key.serialize_pem())?;
 
         tracing::info!("Generated new certificate, saved to {:?}", cert_path);
-        Ok((id, certified))
+        Ok((id, cert_der, signing_key_der))
     }
 
     fn load_or_generate_keypair(path: &Path) -> Result<KeyPair, Box<dyn std::error::Error>> {

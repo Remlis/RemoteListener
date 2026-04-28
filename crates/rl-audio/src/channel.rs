@@ -81,7 +81,11 @@ impl AudioChannel {
     }
 
     /// Stop recording and finalize the file.
-    pub fn stop_recording(&mut self) -> Result<Option<std::path::PathBuf>, AudioError> {
+    /// `paired_receivers`: list of (public_key_bytes, fingerprint) for each paired receiver.
+    pub fn stop_recording(
+        &mut self,
+        paired_receivers: &[([u8; 32], Vec<u8>)],
+    ) -> Result<Option<std::path::PathBuf>, AudioError> {
         self.recording_enabled = false;
         if let Some(writer) = self.recorder.take() {
             // Build the RecordingFileBuilder with paired receiver keys
@@ -93,7 +97,19 @@ impl AudioChannel {
                 builder = builder.add_receiver(&self_kek, kp.fingerprint()).map_err(|e| {
                     AudioError::Opus(format!("Failed to add receiver: {}", e))
                 })?;
-                // TODO: Add paired receivers' key entries when public keys are available
+
+                // Add key entry for each paired receiver via ECDH
+                for (receiver_pk_bytes, fingerprint) in paired_receivers {
+                    let receiver_public = x25519_dalek::PublicKey::from(*receiver_pk_bytes);
+                    let kek = kp.diffie_hellman(&receiver_public).derive_kek(b"rl-keks/v1");
+                    // Convert fingerprint Vec<u8> to [u8; 32]
+                    let mut fp = [0u8; 32];
+                    let len = fingerprint.len().min(32);
+                    fp[..len].copy_from_slice(&fingerprint[..len]);
+                    builder = builder.add_receiver(&kek, fp).map_err(|e| {
+                        AudioError::Opus(format!("Failed to add paired receiver: {}", e))
+                    })?;
+                }
 
                 let result = writer.finalize(builder).map_err(|e| {
                     AudioError::Opus(format!("Failed to finalize recording: {}", e))
