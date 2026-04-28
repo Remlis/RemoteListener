@@ -74,6 +74,74 @@ class AudioPlayerService: ObservableObject {
         } catch {
             print("AudioPlayer: failed to set up audio session: \(error)")
         }
+
+        // Handle audio interruptions (phone calls, alarms, etc.)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleInterruption),
+            name: AVAudioSession.interruptionNotification,
+            object: nil
+        )
+
+        // Handle route changes (headphones unplugged, etc.)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteChange),
+            name: AVAudioSession.routeChangeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleInterruption(_ notification: Notification) {
+        guard let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let interruptionType = AVAudioSession.InterruptionType(rawValue: type) else {
+            return
+        }
+
+        switch interruptionType {
+        case .began:
+            // Audio interrupted (e.g., phone call) — pause playback
+            pauseForInterruption()
+        case .ended:
+            guard let options = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
+            let shouldResume = AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume)
+            if shouldResume {
+                resumeAfterInterruption()
+            }
+        @unknown default:
+            break
+        }
+    }
+
+    @objc private func handleRouteChange(_ notification: Notification) {
+        guard let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
+            return
+        }
+        if reason == .oldDeviceUnavailable {
+            // Headphones unplugged — pause to avoid speaker blast
+            pauseForInterruption()
+        }
+    }
+
+    private func pauseForInterruption() {
+        playerNode?.pause()
+        engine?.pause()
+        do {
+            try AVAudioSession.sharedInstance().setActive(false)
+        } catch {
+            print("AudioPlayer: failed to deactivate session: \(error)")
+        }
+    }
+
+    private func resumeAfterInterruption() {
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+            try engine?.start()
+            playerNode?.play()
+        } catch {
+            print("AudioPlayer: failed to resume after interruption: \(error)")
+        }
     }
 
     private func setupEngine() {

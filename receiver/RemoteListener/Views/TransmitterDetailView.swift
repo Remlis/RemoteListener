@@ -2,10 +2,10 @@
 // TransmitterDetailView.swift — Channels, controls, and live audio for a transmitter
 
 import SwiftUI
+import RLKit
 
 struct TransmitterDetailView: View {
     @ObservedObject var connection: TransmitterConnection
-    @State private var liveChannels: Set<String> = []
     @State private var showBitratePicker = false
     @State private var selectedChannelID: String?
     @State private var selectedBitrate: UInt32 = 16
@@ -58,19 +58,17 @@ struct TransmitterDetailView: View {
                                     }
                                 }
                                 Spacer()
-                                // Live audio toggle
-                                Button(action: {
-                                    toggleLive(channelID: channel.id)
-                                }) {
-                                    if liveChannels.contains(channel.id) {
-                                        Image(systemName: "stop.circle")
-                                            .foregroundColor(.red)
-                                    } else {
-                                        Image(systemName: "play.circle")
-                                            .foregroundColor(.green)
-                                    }
+                                // Live audio: navigate to dedicated listen view
+                                NavigationLink(destination: LiveListenView(
+                                    connection: connection,
+                                    channelID: channel.id,
+                                    channelName: channel.deviceName,
+                                    channelBitrate: channel.bitrate
+                                )) {
+                                    Image(systemName: "play.circle")
+                                        .foregroundColor(.green)
                                 }
-                                .buttonStyle(.borderless)
+                                .disabled(connection.state != .ready)
                             }
 
                             // Control buttons
@@ -164,16 +162,6 @@ struct TransmitterDetailView: View {
         case .connecting, .hello: return .orange
         case .ready: return .green
         case .closed: return .red
-        }
-    }
-
-    private func toggleLive(channelID: String) {
-        if liveChannels.contains(channelID) {
-            connection.stopLiveAudio(channelID: channelID)
-            liveChannels.remove(channelID)
-        } else {
-            connection.startLiveAudio(channelID: channelID)
-            liveChannels.insert(channelID)
         }
     }
 }

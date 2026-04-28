@@ -20,6 +20,9 @@
 		DCA0DB0998811F58CED9B6B2 /* LibOpusBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 044FA0A556327A6CAD771E5F /* LibOpusBridge.swift */; };
 		E74E7F50431335D0134088E1 /* rl_opus_bridge.c in Sources */ = {isa = PBXBuildFile; fileRef = F7EE8540473BE1EAB095690E /* rl_opus_bridge.c */; };
 		E99C58DD45C91DF78FA43AD7 /* TransmitterDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5583FFB00BF8BADE682AAB4E /* TransmitterDetailView.swift */; };
+		A583F94BBAA945A6967D7771 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A99675E4A8B440DE8469E111 /* KeychainService.swift */; };
+		9469A66140BE4F1F95EA3921 /* RecordingPlaybackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EAEF987665048F98CC9779F /* RecordingPlaybackService.swift */; };
+		7A22BA34C8C9442192790BF5 /* LiveListenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92AD28084BE64B1981681F31 /* LiveListenView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +40,9 @@
 		D7BCFA98226CA969D2982C90 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
 		E2ED23ED19BE3F4C23793D99 /* RemoteListenerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteListenerApp.swift; sourceTree = "<group>"; };
 		F7EE8540473BE1EAB095690E /* rl_opus_bridge.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = rl_opus_bridge.c; sourceTree = "<group>"; };
+		A99675E4A8B440DE8469E111 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
+		4EAEF987665048F98CC9779F /* RecordingPlaybackService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingPlaybackService.swift; sourceTree = "<group>"; };
+		92AD28084BE64B1981681F31 /* LiveListenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -80,6 +86,7 @@
 				28BEA9F613253E18053540E9 /* SettingsView.swift */,
 				5583FFB00BF8BADE682AAB4E /* TransmitterDetailView.swift */,
 				38BBDF62BAE1F38DA1234B41 /* TransmittersView.swift */,
+				92AD28084BE64B1981681F31 /* LiveListenView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -107,6 +114,8 @@
 				AB2CA3B4BBCB44F7A2075034 /* AudioPlayerService.swift */,
 				7B1665766B015FE0367E21FE /* CryptoService.swift */,
 				044FA0A556327A6CAD771E5F /* LibOpusBridge.swift */,
+				4EAEF987665048F98CC9779F /* RecordingPlaybackService.swift */,
+				A99675E4A8B440DE8469E111 /* KeychainService.swift */,
 				F7EE8540473BE1EAB095690E /* rl_opus_bridge.c */,
 			);
 			path = Services;
@@ -192,6 +201,9 @@
 				4EB5E1FF0D67B6DBCB91C373 /* SettingsView.swift in Sources */,
 				E99C58DD45C91DF78FA43AD7 /* TransmitterDetailView.swift in Sources */,
 				8023677226EB05AFD18ED3D9 /* TransmittersView.swift in Sources */,
+				7A22BA34C8C9442192790BF5 /* LiveListenView.swift in Sources */,
+				9469A66140BE4F1F95EA3921 /* RecordingPlaybackService.swift in Sources */,
+				A583F94BBAA945A6967D7771 /* KeychainService.swift in Sources */,
 				E74E7F50431335D0134088E1 /* rl_opus_bridge.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -202,6 +214,7 @@
 		12AEE65A15B8661256DBE7D2 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+    GENERATE_INFOPLIST_FILE = YES;
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
@@ -265,6 +278,7 @@
 		C66EFD98DEC8A50526F352DC /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+    GENERATE_INFOPLIST_FILE = YES;
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
@@ -321,6 +335,7 @@
 		DE5FDF36E8F9ACAD4CA761D2 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+    GENERATE_INFOPLIST_FILE = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = RemoteListener/RemoteListener.entitlements;
@@ -347,6 +362,7 @@
 		F3B2CD7D26F6C85AD525948A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+    GENERATE_INFOPLIST_FILE = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = RemoteListener/RemoteListener.entitlements;
