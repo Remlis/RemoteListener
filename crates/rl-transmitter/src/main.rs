@@ -2,11 +2,11 @@
 
 use rl_core::config::Config;
 use rl_discovery::{Announcement, DiscoveryClient};
-use rl_tray::TrayCommand;
 use rl_transmitter::discovery::DiscoveryService;
 use rl_transmitter::server::run_server;
 use rl_transmitter::upnp;
 use rl_transmitter::Transmitter;
+use rl_tray::TrayCommand;
 
 #[tokio::main]
 async fn main() {
@@ -196,10 +196,14 @@ async fn main() {
                                 if let Some(mut child) = child {
                                     use std::io::Write;
                                     if let Some(stdin) = child.stdin.as_mut() {
-                                        let _ = stdin.write_all(tray_device_id_for_actions.as_bytes());
+                                        let _ =
+                                            stdin.write_all(tray_device_id_for_actions.as_bytes());
                                     }
                                     let _ = child.wait();
-                                    println!("Device ID copied to clipboard: {}", tray_device_id_for_actions);
+                                    println!(
+                                        "Device ID copied to clipboard: {}",
+                                        tray_device_id_for_actions
+                                    );
                                 }
                             }
                             #[cfg(not(target_os = "macos"))]
@@ -261,7 +265,8 @@ async fn main() {
                             Ok(session) => {
                                 tracing::info!(
                                     "Relay session established with {:02x?}...",
-                                    &session.remote_device_id[..8.min(session.remote_device_id.len())]
+                                    &session.remote_device_id
+                                        [..8.min(session.remote_device_id.len())]
                                 );
                                 // Wrap the raw TCP stream in TLS (as server)
                                 let tls_stream =
@@ -273,13 +278,12 @@ async fn main() {
                                         }
                                     };
                                 // Handle as a normal connection
-                                if let Err(e) =
-                                    rl_transmitter::server::handle_relay_connection(
-                                        tls_stream,
-                                        relay_state.clone(),
-                                        relay_device_id.clone(),
-                                    )
-                                    .await
+                                if let Err(e) = rl_transmitter::server::handle_relay_connection(
+                                    tls_stream,
+                                    relay_state.clone(),
+                                    relay_device_id.clone(),
+                                )
+                                .await
                                 {
                                     tracing::error!("Relay connection error: {}", e);
                                 }

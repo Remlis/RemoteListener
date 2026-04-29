@@ -94,14 +94,16 @@ impl AudioChannel {
                     .with_sender_public_key(*kp.public_key().as_bytes());
                 // Add self as a receiver (so the transmitter can decrypt its own recordings)
                 let self_kek = kp.diffie_hellman(kp.public_key()).derive_kek(b"rl-keks/v1");
-                builder = builder.add_receiver(&self_kek, kp.fingerprint()).map_err(|e| {
-                    AudioError::Opus(format!("Failed to add receiver: {}", e))
-                })?;
+                builder = builder
+                    .add_receiver(&self_kek, kp.fingerprint())
+                    .map_err(|e| AudioError::Opus(format!("Failed to add receiver: {}", e)))?;
 
                 // Add key entry for each paired receiver via ECDH
                 for (receiver_pk_bytes, fingerprint) in paired_receivers {
                     let receiver_public = x25519_dalek::PublicKey::from(*receiver_pk_bytes);
-                    let kek = kp.diffie_hellman(&receiver_public).derive_kek(b"rl-keks/v1");
+                    let kek = kp
+                        .diffie_hellman(&receiver_public)
+                        .derive_kek(b"rl-keks/v1");
                     // Convert fingerprint Vec<u8> to [u8; 32]
                     let mut fp = [0u8; 32];
                     let len = fingerprint.len().min(32);

@@ -41,13 +41,8 @@ pub enum TrayCommand {
 ///
 /// Note: On macOS, winit's EventLoop must be created on the main thread.
 /// If called from a non-main thread, the tray thread will exit gracefully.
-pub fn run_tray() -> Result<
-    (
-        mpsc::Sender<TrayCommand>,
-        mpsc::Receiver<TrayAction>,
-    ),
-    Box<dyn std::error::Error>,
-> {
+pub fn run_tray(
+) -> Result<(mpsc::Sender<TrayCommand>, mpsc::Receiver<TrayAction>), Box<dyn std::error::Error>> {
     let (tx, rx) = mpsc::channel::<TrayCommand>();
     let (action_tx, action_rx) = mpsc::channel::<TrayAction>();
 
@@ -65,7 +60,7 @@ pub fn run_tray() -> Result<
         std::panic::set_hook(prev_hook);
 
         match result {
-            Ok(Ok(())) => {},
+            Ok(Ok(())) => {}
             Ok(Err(e)) => tracing::warn!("Tray error: {}", e),
             Err(_) => tracing::warn!("Tray unavailable: EventLoop requires main thread (macOS)"),
         }

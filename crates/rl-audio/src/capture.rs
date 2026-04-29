@@ -257,7 +257,15 @@ impl AudioInput for CpalInput {
             cpal::SampleFormat::I16 => device.build_input_stream::<i16, _, _>(
                 &config,
                 move |data: &[i16], _info: &cpal::InputCallbackInfo| {
-                    capture_callback(data, channels, native_rate, target_rate, chunk_size, &tx, &sample_pos);
+                    capture_callback(
+                        data,
+                        channels,
+                        native_rate,
+                        target_rate,
+                        chunk_size,
+                        &tx,
+                        &sample_pos,
+                    );
                 },
                 move |err| {
                     tracing::error!("Audio capture error: {}", err);
@@ -271,7 +279,15 @@ impl AudioInput for CpalInput {
             cpal::SampleFormat::F32 => device.build_input_stream::<f32, _, _>(
                 &config,
                 move |data: &[f32], _info: &cpal::InputCallbackInfo| {
-                    capture_callback_f32(data, channels, native_rate, target_rate, chunk_size, &tx, &sample_pos);
+                    capture_callback_f32(
+                        data,
+                        channels,
+                        native_rate,
+                        target_rate,
+                        chunk_size,
+                        &tx,
+                        &sample_pos,
+                    );
                 },
                 move |err| {
                     tracing::error!("Audio capture error: {}", err);
@@ -345,7 +361,6 @@ fn capture_callback(
     tx: &mpsc::Sender<AudioChunk>,
     sample_pos: &AtomicU64,
 ) {
-
     // Convert to mono
     let mono: Vec<i16> = if channels > 1 {
         data.chunks(channels as usize)
@@ -417,7 +432,6 @@ fn capture_callback_f32(
     tx: &mpsc::Sender<AudioChunk>,
     sample_pos: &AtomicU64,
 ) {
-
     // Convert f32 to i16 mono
     let mono: Vec<i16> = if channels > 1 {
         data.chunks(channels as usize)

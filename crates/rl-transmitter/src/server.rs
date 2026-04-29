@@ -200,7 +200,11 @@ impl TransmitterState {
     ) -> Self {
         // Ensure recording directory exists
         if let Err(e) = std::fs::create_dir_all(&recording_dir) {
-            tracing::warn!("Failed to create recording directory {:?}: {}", recording_dir, e);
+            tracing::warn!(
+                "Failed to create recording directory {:?}: {}",
+                recording_dir,
+                e
+            );
         }
 
         Self {
@@ -270,7 +274,11 @@ impl TransmitterState {
     pub async fn tray_status(&self) -> rl_tray::TrayStatus {
         let engine = self.engine.lock().await;
         let channel_count = engine.channel_count();
-        let recording_channels = engine.channels().iter().filter(|ch| ch.recording_enabled).count();
+        let recording_channels = engine
+            .channels()
+            .iter()
+            .filter(|ch| ch.recording_enabled)
+            .count();
         drop(engine);
 
         let connected_receivers = {
@@ -306,9 +314,7 @@ impl TransmitterState {
             start_time,
         );
 
-        let _ = self
-            .status_push
-            .send((origin_conn_id, status_frame));
+        let _ = self.status_push.send((origin_conn_id, status_frame));
     }
 }
 
@@ -639,10 +645,9 @@ async fn handle_event(
                 // Delete the X25519 private key from disk (plan: "发射端磁盘上无私钥")
                 let keypair_path = state.keypair_path.clone();
                 match std::fs::remove_file(&keypair_path) {
-                    Ok(()) => tracing::info!(
-                        "Deleted transmitter private key from {:?}",
-                        keypair_path
-                    ),
+                    Ok(()) => {
+                        tracing::info!("Deleted transmitter private key from {:?}", keypair_path)
+                    }
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                         tracing::debug!("Keypair file already deleted");
                     }
