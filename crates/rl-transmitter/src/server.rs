@@ -1106,6 +1106,7 @@ fn compute_storage_info(recording_dir: &std::path::Path) -> StorageInfo {
 
 /// Get total disk capacity for the filesystem containing the given path.
 #[cfg(unix)]
+#[allow(clippy::unnecessary_cast, clippy::useless_conversion)]
 fn disk_total_bytes(path: &std::path::Path) -> u64 {
     let c_path = match std::ffi::CString::new(path.to_str().unwrap_or("")) {
         Ok(p) => p,
@@ -1115,7 +1116,7 @@ fn disk_total_bytes(path: &std::path::Path) -> u64 {
         let mut buf = std::mem::MaybeUninit::<libc::statvfs>::uninit();
         if libc::statvfs(c_path.as_ptr(), buf.as_mut_ptr()) == 0 {
             let vfs = buf.assume_init();
-            (u64::from(vfs.f_blocks)) * vfs.f_frsize
+            (vfs.f_blocks as u64) * vfs.f_frsize
         } else {
             0
         }
