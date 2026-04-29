@@ -47,8 +47,8 @@ public struct RLPFrame {
 
 extension Data {
     func readUInt16(at offset: Int) -> UInt16 {
-        let lo = UInt16(self[offset])
-        let hi = UInt16(self[offset + 1])
+        let hi = UInt16(self[offset])
+        let lo = UInt16(self[offset + 1])
         return (hi << 8) | lo
     }
 
@@ -57,7 +57,7 @@ extension Data {
         let b1 = UInt32(self[offset + 1])
         let b2 = UInt32(self[offset + 2])
         let b3 = UInt32(self[offset + 3])
-        return (b3 << 24) | (b2 << 16) | (b1 << 8) | b0
+        return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
     }
 }
 

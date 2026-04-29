@@ -2,11 +2,26 @@
 // RecordingsView.swift — Browse and manage recordings for a channel
 
 import SwiftUI
+import RLKit
+import Combine
 
 struct RecordingsView: View {
     @ObservedObject var connection: TransmitterConnection
     let channelID: String
+    @StateObject private var playbackService = RecordingPlaybackService()
+    @State private var fetchedRecordingID: String?
+    @State private var fetchedRecordingData: Data?
     @State private var isFetching = false
+    @State private var playingRecordingID: String?
+    @State private var fetchError: String?
+    @State private var fetchCancellables = Set<AnyCancellable>()
+
+    private var decoder: OpusDecoding? = LibOpusDecoder()
+
+    init(connection: TransmitterConnection, channelID: String) {
+        self.connection = connection
+        self.channelID = channelID
+    }
 
     var body: some View {
         List {
@@ -32,14 +47,42 @@ struct RecordingsView: View {
                             }
                         }
                         Spacer()
+
+                        // Play/Stop button
+                        if playingRecordingID == recording.id && playbackService.isPlaying {
+                            Button(action: {
+                                playbackService.stop()
+                                playingRecordingID = nil
+                            }) {
+                                Image(systemName: "stop.circle.fill")
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(.borderless)
+                        } else {
+                            Button(action: {
+                                playRecording(recording)
+                            }) {
+                                Image(systemName: "play.circle")
+                                    .foregroundColor(.green)
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(isFetching)
+                        }
+
                         // Fetch button
                         Button(action: {
-                            connection.fetchRecording(recordingID: recording.id)
+                            fetchRecording(recording.id)
                         }) {
-                            Image(systemName: "arrow.down.circle")
-                                .foregroundColor(.blue)
+                            if isFetching && fetchedRecordingID == recording.id {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "arrow.down.circle")
+                                    .foregroundColor(.blue)
+                            }
                         }
                         .buttonStyle(.borderless)
+                        .disabled(isFetching)
+
                         // Delete button
                         Button(action: {
                             connection.deleteRecording(recordingID: recording.id)
@@ -49,6 +92,24 @@ struct RecordingsView: View {
                         }
                         .buttonStyle(.borderless)
                     }
+                }
+            }
+
+            // Playback error
+            if let error = playbackService.playbackError {
+                Section {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+            }
+
+            // Fetch error
+            if let error = fetchError {
+                Section {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
                 }
             }
 
@@ -81,6 +142,84 @@ struct RecordingsView: View {
         .onAppear {
             connection.requestRecordingList(channelID: channelID)
         }
+    }
+
+    private func fetchRecording(_ recordingID: String) {
+        isFetching = true
+        fetchedRecordingID = recordingID
+        fetchedRecordingData = nil
+        fetchError = nil
+
+        // Collect chunks via recordingDataSubject
+        var collectedData = Data()
+        let dataSub = connection.recordingDataSubject
+            .sink { chunk in
+                collectedData.append(chunk)
+            }
+
+        // Wait for completion via recordingFetchCompleteSubject
+        connection.recordingFetchCompleteSubject
+            .filter { $0 == recordingID }
+            .first()
+            .sink { [self] _ in
+                dataSub.cancel()
+                isFetching = false
+                if !collectedData.isEmpty {
+                    fetchedRecordingData = collectedData
+                    fetchedRecordingID = recordingID
+                } else {
+                    fetchError = "No data received"
+                }
+            }
+            .store(in: &fetchCancellables)
+
+        connection.fetchRecording(recordingID: recordingID)
+    }
+
+    private func playRecording(_ recording: RecordingInfo) {
+        // If we already have the data, play it
+        if let data = fetchedRecordingData, fetchedRecordingID == recording.id {
+            doPlay(data: data, recordingID: recording.id)
+            return
+        }
+
+        // Otherwise, fetch first then play
+        isFetching = true
+        fetchedRecordingID = recording.id
+        fetchError = nil
+
+        var collectedData = Data()
+        let dataSub = connection.recordingDataSubject
+            .sink { chunk in
+                collectedData.append(chunk)
+            }
+
+        connection.recordingFetchCompleteSubject
+            .filter { $0 == recording.id }
+            .first()
+            .sink { [self] _ in
+                dataSub.cancel()
+                isFetching = false
+                if !collectedData.isEmpty {
+                    fetchedRecordingData = collectedData
+                    fetchedRecordingID = recording.id
+                    doPlay(data: collectedData, recordingID: recording.id)
+                } else {
+                    fetchError = "No data received"
+                }
+            }
+            .store(in: &fetchCancellables)
+
+        connection.fetchRecording(recordingID: recording.id)
+    }
+
+    private func doPlay(data: Data, recordingID: String) {
+        guard let dec = decoder else {
+            fetchError = "Opus decoder not available"
+            return
+        }
+        playingRecordingID = recordingID
+        playbackService.play(recordingData: data, connection: connection, decoder: dec)
     }
 
     private func formatDuration(_ seconds: UInt32) -> String {

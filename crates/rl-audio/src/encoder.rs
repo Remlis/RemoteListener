@@ -22,6 +22,15 @@ impl Bitrate {
             Bitrate::Kbps128 => 128,
         }
     }
+
+    pub fn from_kbps(kbps: u32) -> Self {
+        match kbps {
+            32 => Bitrate::Kbps32,
+            64 => Bitrate::Kbps64,
+            128 => Bitrate::Kbps128,
+            _ => Bitrate::Kbps16,
+        }
+    }
 }
 
 /// Opus encoder for mono 48kHz audio.

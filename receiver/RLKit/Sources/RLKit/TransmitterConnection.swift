@@ -5,6 +5,9 @@ import Foundation
 import Network
 import Combine
 import CryptoKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Connection state matching the Rust ConnectionState enum.
 public enum ConnectionState: Equatable {
@@ -103,7 +106,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     public let host: String
     public let port: UInt16
 
-    /// Expected SHA-256 fingerprint of the peer's certificate (hex string).
+    /// Expected SHA-256 fingerprint of the peer's TLS certificate (hex string).
     /// If nil, certificate verification is skipped (only for first-time pairing).
     public var expectedFingerprint: String?
 
@@ -124,12 +127,22 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     /// Currently fetching recording data (accumulated chunks).
     @Published public private(set) var fetchingRecordingID: String?
     public let recordingDataSubject = PassthroughSubject<Data, Never>()
+    /// Emits recording ID when a fetch completes.
+    public let recordingFetchCompleteSubject = PassthroughSubject<String, Never>()
 
     /// Live audio chunks received from the transmitter.
     public let audioChunkSubject = PassthroughSubject<LiveAudioChunkData, Never>()
 
-    /// Called when a PairResponse is received with the transmitter's public key and fingerprint.
-    public var onPairResponse: ((_ transmitterPublicKey: Data, _ fingerprint: Data) -> Void)?
+    /// Called when a PairResponse is received with the transmitter's public key and TLS cert fingerprint.
+    public var onPairResponse: ((_ transmitterPublicKey: Data, _ tlsCertFingerprint: Data) -> Void)?
+
+    /// Load the receiver's private key for a given TLS cert fingerprint (hex string).
+    /// Set by the app layer to provide Keychain-backed storage.
+    public var loadPrivateKey: ((_ tlsCertFingerprint: String) -> Data?)?
+
+    /// Store the receiver's private key for a given TLS cert fingerprint (hex string).
+    /// Set by the app layer to provide Keychain-backed storage.
+    public var storePrivateKey: ((_ key: Data, _ tlsCertFingerprint: String) -> Void)?
 
     private var connection: NWConnection?
     private var readBuffer = Data()
@@ -146,6 +159,8 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     private var heartbeatTimer: Timer?
     /// Time of last received data from the transmitter.
     private var lastReceivedTime: Date = Date()
+    /// Receiver's X25519 private key for this connection (generated or loaded from Keychain).
+    private var receiverPrivateKey: Data?
 
     public init(host: String, port: UInt16, expectedFingerprint: String? = nil) {
         self.host = host
@@ -169,20 +184,12 @@ public class TransmitterConnection: ObservableObject, Identifiable {
 
         // Verify certificate fingerprint against expected value
         let expectedFingerprint = self.expectedFingerprint
+        // Capture the TLS cert fingerprint on first-time connections for later storage
+        let capturedFingerprint = Box<String?>(nil)
         sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
             { (_, sec_trust, verifyCallback) in
-                guard let expected = expectedFingerprint else {
-                    // No fingerprint stored yet (first-time pairing) — accept and capture
-                    verifyCallback(true)
-                    return
-                }
                 let trust = sec_trust_copy_ref(sec_trust).takeRetainedValue()
-                var cfError: CFError?
-                guard SecTrustEvaluateWithError(trust, &cfError) else {
-                    print("TLS: certificate trust evaluation failed")
-                    verifyCallback(false)
-                    return
-                }
+
                 // Get the leaf certificate and compute its SHA-256 fingerprint
                 guard let certChain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
                       let leafCert = certChain.first,
@@ -192,11 +199,19 @@ public class TransmitterConnection: ObservableObject, Identifiable {
                     return
                 }
                 let fingerprint = SHA256.hash(data: certData).compactMap { String(format: "%02x", $0) }.joined()
-                if fingerprint == expected {
-                    verifyCallback(true)
+
+                if let expected = expectedFingerprint {
+                    // Known transmitter — verify fingerprint matches
+                    if fingerprint == expected {
+                        verifyCallback(true)
+                    } else {
+                        print("TLS: fingerprint mismatch (expected \(expected), got \(fingerprint))")
+                        verifyCallback(false)
+                    }
                 } else {
-                    print("TLS: fingerprint mismatch (expected \(expected), got \(fingerprint))")
-                    verifyCallback(false)
+                    // First-time pairing — accept and capture fingerprint for future connections
+                    capturedFingerprint.value = fingerprint
+                    verifyCallback(true)
                 }
             }, DispatchQueue.main)
 
@@ -208,6 +223,11 @@ public class TransmitterConnection: ObservableObject, Identifiable {
                 guard let self = self else { return }
                 switch newState {
                 case .ready:
+                    // Capture the TLS cert fingerprint from first-time handshake
+                    if self.expectedFingerprint == nil, let fp = capturedFingerprint.value {
+                        self.expectedFingerprint = fp
+                        print("Captured TLS cert fingerprint: \(fp)")
+                    }
                     self.state = .hello
                     self.sendHello()
                     self.startReadLoop()
@@ -334,6 +354,50 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         sendFrame(messageType: .controlCommand, body: body)
     }
 
+    /// Send a PairRequest with the receiver's X25519 public key.
+    private func sendPairRequest() {
+        // Try to load existing private key for this transmitter
+        if let fp = expectedFingerprint,
+           let existingKey = loadPrivateKey?(fp) {
+            receiverPrivateKey = existingKey
+        }
+
+        // Generate a new X25519 keypair if we don't have one
+        if receiverPrivateKey == nil {
+            let privateKey: Curve25519.KeyAgreement.PrivateKey
+            do {
+                privateKey = try Curve25519.KeyAgreement.PrivateKey()
+            } catch {
+                print("Failed to generate X25519 keypair: \(error)")
+                return
+            }
+            receiverPrivateKey = privateKey.rawRepresentation
+
+            // Store the private key via the app-provided callback
+            if let fp = expectedFingerprint {
+                storePrivateKey?(receiverPrivateKey!, fp)
+            }
+        }
+
+        // Derive the public key from the private key
+        guard let privKeyData = receiverPrivateKey,
+              let privateKey = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: privKeyData) else {
+            print("Failed to reconstruct X25519 private key")
+            return
+        }
+        let publicKeyData = privateKey.publicKey.rawRepresentation
+
+        // Send PairRequest { device_name = 1, public_key = 2 }
+        var body = Data()
+        #if canImport(UIKit)
+        body.appendProtoString(field: 1, value: UIDevice.current.name)
+        #else
+        body.appendProtoString(field: 1, value: "RL Receiver")
+        #endif
+        body.appendProtoBytes(field: 2, value: publicKeyData)
+        sendFrame(messageType: .pairRequest, body: body)
+    }
+
     /// Set auto-delete days on the transmitter.
     public func setAutoDeleteDays(_ days: UInt32) {
         var body = Data()
@@ -351,9 +415,12 @@ public class TransmitterConnection: ObservableObject, Identifiable {
 
     private func sendFrame(messageType: MessageType, body: Data) {
         let frameData = RLPFrame.create(messageType: messageType, body: body)
+        NSLog("sendFrame: type=%@, bytes=%lu, queue=%@", String(describing: messageType), UInt(frameData.count), String(cString: __dispatch_queue_get_label(nil)))
         connection?.send(content: frameData, completion: .contentProcessed { error in
             if let error = error {
-                print("Send error: \(error)")
+                NSLog("Send error (\(messageType)): \(error)")
+            } else {
+                NSLog("Send OK: %@", String(describing: messageType))
             }
         })
     }
@@ -372,6 +439,7 @@ public class TransmitterConnection: ObservableObject, Identifiable {
             guard let self = self else { return }
 
             if let content = content, !content.isEmpty {
+                NSLog("readNextChunk: received %lu bytes", UInt(content.count))
                 self.readBuffer.append(content)
                 self.processReadBuffer()
                 DispatchQueue.main.async { self.lastReceivedTime = Date() }
@@ -416,7 +484,11 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     }
 
     private func handleFrame(_ frame: RLPFrame) {
-        guard let header = RLPHeader.decode(from: frame.header) else { return }
+        guard let header = RLPHeader.decode(from: frame.header) else {
+            NSLog("handleFrame: failed to decode header, headerLen=%lu", UInt(frame.header.count))
+            return
+        }
+        NSLog("handleFrame: type=%@ bodyLen=%lu", String(describing: header.messageType), UInt(frame.body.count))
 
         switch header.messageType {
         case .hello:
@@ -459,13 +531,20 @@ public class TransmitterConnection: ObservableObject, Identifiable {
 
     private func handleHello(_ data: Data) {
         let deviceName = data.parseProtoString(field: 1)
-        DispatchQueue.main.async {
+
+        // Send responses immediately on the current queue (readQueue) to avoid
+        // dispatch delays that cause the transmitter to think we're unresponsive
+        self.requestChannelList()
+        self.sendPairRequest()
+        self.sendPing()
+
+        // Update @Published properties on main queue (required by SwiftUI)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             self.remoteDeviceName = deviceName
             self.state = .ready
-            self.reconnectDelay = 1.0 // Reset backoff on successful connection
+            self.reconnectDelay = 1.0
             self.startHeartbeat()
-            // Request channel list after hello
-            self.requestChannelList()
         }
     }
 
@@ -580,13 +659,13 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     private func handlePairResponse(_ data: Data) {
         // PairResponse { public_key = 1, existing_key_fingerprints = 3 }
         let publicKeyData = data.parseProtoBytes(field: 1)
-        // Store the transmitter's public key for future TLS fingerprint verification
+        // Store the transmitter's X25519 public key for ECDH key derivation
         if let pubKey = publicKeyData {
-            let fingerprint = SHA256.hash(data: pubKey).compactMap { String(format: "%02x", $0) }.joined()
-            let fingerprintData = Data(SHA256.hash(data: pubKey))
-            expectedFingerprint = fingerprint
-            print("Paired with transmitter fingerprint: \(fingerprint)")
-            onPairResponse?(pubKey, fingerprintData)
+            // Use the TLS cert fingerprint (already set from TLS handshake) as the storage key
+            if let fp = expectedFingerprint, let fingerprintData = Data(hexString: fp) {
+                print("Paired with transmitter, TLS fingerprint: \(fp)")
+                onPairResponse?(pubKey, fingerprintData)
+            }
         }
         DispatchQueue.main.async {
             self.isPaired = true
@@ -712,12 +791,11 @@ public class TransmitterConnection: ObservableObject, Identifiable {
     private func handleRecordingFetchComplete(_ data: Data) {
         // RecordingFetchComplete { recording_id = 1 }
         let recordingID = data.parseProtoString(field: 1) ?? ""
-        let completeData = recordingChunkBuffer
         recordingChunkBuffer = Data()
 
         DispatchQueue.main.async {
             self.fetchingRecordingID = nil
-            self.recordingDataSubject.send(completeData)
+            self.recordingFetchCompleteSubject.send(recordingID)
         }
     }
 
@@ -845,6 +923,12 @@ public class TransmitterConnection: ObservableObject, Identifiable {
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
     }
+}
+
+/// Reference-type wrapper for communicating values from C closures.
+private class Box<T> {
+    var value: T
+    init(_ value: T) { self.value = value }
 }
 
 // MARK: - Protobuf encoding helpers
@@ -988,5 +1072,24 @@ extension Data {
         default: return false // Unknown wire type — cannot skip
         }
         return true
+    }
+}
+
+// MARK: - Data hex helpers
+
+extension Data {
+    /// Initialize from a hex string.
+    init?(hexString: String) {
+        let clean = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard clean.count % 2 == 0 else { return nil }
+        var bytes = [UInt8]()
+        var index = clean.startIndex
+        while index < clean.endIndex {
+            let next = clean.index(after: index)
+            guard let byte = UInt8(clean[index...next], radix: 16) else { return nil }
+            bytes.append(byte)
+            index = clean.index(after: next)
+        }
+        self = Data(bytes)
     }
 }

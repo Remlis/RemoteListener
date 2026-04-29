@@ -15,9 +15,9 @@ class KeychainService {
     // MARK: - Private Key
 
     /// Store the receiver's X25519 private key for a given transmitter fingerprint.
-    func storePrivateKey(_ key: Data, forTransmitterFingerprint fingerprint: Data) -> Bool {
-        let key = keyForItem(type: "private", fingerprint: fingerprint)
-        return storeData(key, data: key)
+    func storePrivateKey(_ keyData: Data, forTransmitterFingerprint fingerprint: Data) -> Bool {
+        let account = keyForItem(type: "private", fingerprint: fingerprint)
+        return storeData(account, data: keyData)
     }
 
     /// Retrieve the receiver's X25519 private key for a given transmitter fingerprint.

@@ -2,6 +2,7 @@
 // KeyTransferView.swift — Export/import encryption keys between devices
 
 import SwiftUI
+import RLKit
 import CryptoKit
 import CryptoSwift
 
@@ -242,15 +243,12 @@ struct KeyTransferView: View {
 
     private func deriveKEK(passphrase: Data, salt: Data, n: UInt32, r: UInt32, p: UInt32) throws -> SymmetricKey {
         // scrypt key derivation matching Rust's scrypt crate
-        // Rust uses: scrypt::Params::new(n.ilog2() as u8, r, p, 32)
-        let logN = UInt8(n == 0 ? 0 : n.bitWidth - n.leadingZeroBitCount - 1)
-        let params = try ScryptParams(N: logN, r: Int(r), p: Int(p))
-        let derivedBytes = try Scrypt(password: passphrase.bytes,
-                                       salt: salt.bytes,
-                                       blocksize: Int(r),
-                                       costParameter: Int(n),
-                                       parallelism: Int(p),
-                                       keyLength: 32).calculate()
+        let derivedBytes = try Scrypt(password: [UInt8](passphrase),
+                                       salt: [UInt8](salt),
+                                       dkLen: 32,
+                                       N: Int(n),
+                                       r: Int(r),
+                                       p: Int(p)).calculate()
         return SymmetricKey(data: derivedBytes)
     }
 }

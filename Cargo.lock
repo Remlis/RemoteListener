@@ -3435,6 +3435,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
+ "x25519-dalek",
 ]
 
 [[package]]
@@ -3529,6 +3530,7 @@ dependencies = [
  "aes-gcm",
  "dirs",
  "igd-next",
+ "libc",
  "mdns-sd",
  "rand 0.8.6",
  "rcgen",

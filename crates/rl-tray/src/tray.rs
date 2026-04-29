@@ -37,17 +37,41 @@ pub enum TrayCommand {
 }
 
 /// Runs the system tray on the main thread with its own winit event loop.
-/// Returns a sender that the tokio runtime can use to update the tray.
-pub fn run_tray() -> Result<mpsc::Sender<TrayCommand>, Box<dyn std::error::Error>> {
+/// Returns a sender for commands and a receiver for actions triggered by the user.
+///
+/// Note: On macOS, winit's EventLoop must be created on the main thread.
+/// If called from a non-main thread, the tray thread will exit gracefully.
+pub fn run_tray() -> Result<
+    (
+        mpsc::Sender<TrayCommand>,
+        mpsc::Receiver<TrayAction>,
+    ),
+    Box<dyn std::error::Error>,
+> {
     let (tx, rx) = mpsc::channel::<TrayCommand>();
+    let (action_tx, action_rx) = mpsc::channel::<TrayAction>();
 
     std::thread::spawn(move || {
-        if let Err(e) = run_tray_inner(rx) {
-            tracing::error!("Tray error: {}", e);
+        // Suppress the default panic hook output for this thread
+        // (winit panics with "EventLoop must be created on the main thread" on macOS)
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_tray_inner(rx, action_tx)
+        }));
+
+        // Restore the previous hook
+        std::panic::set_hook(prev_hook);
+
+        match result {
+            Ok(Ok(())) => {},
+            Ok(Err(e)) => tracing::warn!("Tray error: {}", e),
+            Err(_) => tracing::warn!("Tray unavailable: EventLoop requires main thread (macOS)"),
         }
     });
 
-    Ok(tx)
+    Ok((tx, action_rx))
 }
 
 struct TrayApp {
@@ -228,11 +252,12 @@ fn create_icon() -> tray_icon::Icon {
     tray_icon::Icon::from_rgba(rgba, size, size).expect("Failed to create icon")
 }
 
-fn run_tray_inner(rx: mpsc::Receiver<TrayCommand>) -> Result<(), Box<dyn std::error::Error>> {
+fn run_tray_inner(
+    rx: mpsc::Receiver<TrayCommand>,
+    action_tx: mpsc::Sender<TrayAction>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Wait);
-
-    let (action_tx, _action_rx) = mpsc::channel::<TrayAction>();
 
     let mut app = TrayApp {
         tray_icon: None,

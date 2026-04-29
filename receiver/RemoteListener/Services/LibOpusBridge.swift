@@ -11,6 +11,7 @@
 //   3. Add to the Xcode project under "Frameworks, Libraries, and Embedded Content"
 
 import Foundation
+import RLKit
 
 /// Concrete Opus decoder using libopus C library.
 ///

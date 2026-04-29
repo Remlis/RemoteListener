@@ -27,10 +27,48 @@ async fn main() {
         Config::default()
     });
 
-    let tx = Transmitter::new(config).unwrap_or_else(|e| {
+    let mut tx = Transmitter::new(config).unwrap_or_else(|e| {
         eprintln!("Failed to start transmitter: {}", e);
         std::process::exit(1);
     });
+
+    // Scan and register audio input devices
+    // Use a timeout since CPAL device enumeration can hang on some macOS configs
+    let scan_result = std::thread::scope(|_| {
+        let handle = std::thread::spawn(rl_audio::engine::AudioEngine::scan_devices);
+        for _ in 0..50 {
+            if handle.is_finished() {
+                return Some(handle.join().unwrap());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        tracing::warn!("Audio device scan timed out — continuing without audio devices");
+        None
+    });
+
+    if let Some(Ok(devices)) = scan_result {
+        let bitrate = rl_audio::encoder::Bitrate::from_kbps(tx.config().default_bitrate);
+        for (i, device) in devices.iter().enumerate() {
+            let channel_id = format!("ch-{:03}", i + 1);
+            if let Err(e) = tx.engine_mut().add_device_channel(
+                channel_id,
+                &device.uid,
+                device.name.clone(),
+                bitrate,
+            ) {
+                tracing::warn!("Failed to add device {}: {}", device.name, e);
+            } else {
+                println!("Audio channel: {} ({})", device.name, device.uid);
+            }
+        }
+        if devices.is_empty() {
+            tracing::warn!("No audio input devices found");
+        }
+    } else if matches!(&scan_result, Some(Err(_))) {
+        if let Some(Err(e)) = scan_result {
+            tracing::warn!("Failed to scan audio devices: {}", e);
+        }
+    }
 
     // Save display values before consuming tx
     let device_id_str = tx.device_id_display().to_string();
@@ -140,8 +178,45 @@ async fn main() {
 
     // Start system tray
     let tray_sender = match rl_tray::run_tray() {
-        Ok(sender) => {
+        Ok((sender, action_receiver)) => {
             println!("System tray started.");
+            // Handle tray actions on a background thread
+            let tray_device_id_for_actions = device_id_str.clone();
+            std::thread::spawn(move || {
+                while let Ok(action) = action_receiver.recv() {
+                    match action {
+                        rl_tray::TrayAction::ShowDeviceId => {
+                            #[cfg(target_os = "macos")]
+                            {
+                                use std::process::Command;
+                                let child = Command::new("pbcopy")
+                                    .stdin(std::process::Stdio::piped())
+                                    .spawn()
+                                    .ok();
+                                if let Some(mut child) = child {
+                                    use std::io::Write;
+                                    if let Some(stdin) = child.stdin.as_mut() {
+                                        let _ = stdin.write_all(tray_device_id_for_actions.as_bytes());
+                                    }
+                                    let _ = child.wait();
+                                    println!("Device ID copied to clipboard: {}", tray_device_id_for_actions);
+                                }
+                            }
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                println!(
+                                    "RemoteListener Device ID: {}\n\nUse this ID to pair from the iOS app.",
+                                    tray_device_id_for_actions
+                                );
+                            }
+                        }
+                        rl_tray::TrayAction::OpenRecordingsDir => {
+                            // Handled by the menu item text — user navigates manually
+                        }
+                        rl_tray::TrayAction::Quit => {}
+                    }
+                }
+            });
             Some(sender)
         }
         Err(e) => {

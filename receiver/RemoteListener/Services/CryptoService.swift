@@ -20,13 +20,12 @@ class CryptoService {
 
     /// Decrypt AES-256-GCM data.
     static func decryptAES256GCM(key: SymmetricKey,
-                                  nonce: AES.GCM.Nonce,
                                   sealedBox: AES.GCM.SealedBox) throws -> Data {
-        return try AES.GCM.open(sealedBox, using: key, nonce: nonce)
+        return try AES.GCM.open(sealedBox, using: key)
     }
 
     /// Compute SHA-256 fingerprint of a public key for identification.
     static func publicKeyFingerprint(_ publicKeyData: Data) -> Data {
-        return SHA256.hash(data: publicKeyData).data
+        return Data(SHA256.hash(data: publicKeyData))
     }
 }

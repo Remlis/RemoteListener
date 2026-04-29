@@ -2,6 +2,7 @@
 // SettingsView.swift — Remote configuration for a transmitter
 
 import SwiftUI
+import RLKit
 
 struct SettingsView: View {
     @ObservedObject var connection: TransmitterConnection

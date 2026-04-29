@@ -283,13 +283,16 @@ impl AudioInput for CpalInput {
                 None,
             ),
             _ => return Err(AudioError::NoConfig),
-        }
-        .map_err(|e| {
-            tracing::error!("Failed to build input stream: {}", e);
-            // Put device back so it can be retried
-            self.device = Some(device);
-            AudioError::CaptureFailed
-        })?;
+        };
+
+        let stream = match stream {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("Failed to build input stream: {}", e);
+                self.device = Some(device);
+                return Err(AudioError::CaptureFailed);
+            }
+        };
 
         stream.play().map_err(|e| {
             tracing::error!("Failed to start input stream: {}", e);
@@ -298,8 +301,7 @@ impl AudioInput for CpalInput {
 
         self.stream = Some(stream);
         // Keep the device reference so we can restart later
-        // (cpal consumes the device on build_input_stream, but we can
-        // re-acquire via with_device_uid or new on restart)
+        self.device = Some(device);
         self.sample_rate = native_rate;
 
         Ok(rx)

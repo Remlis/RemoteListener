@@ -2,6 +2,7 @@
 // TransmittersView.swift — Main view showing paired transmitters
 
 import SwiftUI
+import RLKit
 
 struct TransmittersView: View {
     @EnvironmentObject var store: TransmitterStore
